@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -31,6 +32,7 @@ def test_composite_script_checks_and_syncs_a_consumer_without_vcs_metadata_in_ac
         "VERSIONER_BASE": "HEAD~1",
         "VERSIONER_HEAD": "HEAD",
         "VERSIONER_COMMAND": "check",
+        "VERSIONER_MARKETPLACE": "false",
         "SETUPTOOLS_SCM_PRETEND_VERSION": "0+action",
     }
     rejected = subprocess.run(
@@ -50,3 +52,20 @@ def test_composite_script_checks_and_syncs_a_consumer_without_vcs_metadata_in_ac
     env["VERSIONER_COMMAND"] = "check"
     subprocess.run(["bash", "-eo", "pipefail", "-c", script], env=env, check=True, capture_output=True)
     assert git(consumer, "status", "--porcelain") == ""
+
+    marketplace = consumer / "catalog/.claude-plugin/marketplace.json"
+    marketplace.parent.mkdir()
+    original = {"metadata": {"version": "1.0.0"}, "plugins": [{"name": "old", "source": "./old"}]}
+    marketplace.write_text(json.dumps(original))
+    git(consumer, "add", ".")
+    git(consumer, "commit", "--quiet", "-m", "add catalog")
+    env["VERSIONER_COMMAND"] = "sync"
+    subprocess.run(["bash", "-eo", "pipefail", "-c", script], env=env, check=True, capture_output=True)
+    assert json.loads(marketplace.read_text())["metadata"] == original["metadata"]
+    env["VERSIONER_MARKETPLACE"] = "true"
+    subprocess.run(["bash", "-eo", "pipefail", "-c", script], env=env, check=True, capture_output=True)
+    catalog = json.loads(marketplace.read_text())
+    assert catalog["plugins"] == [{"name": "tool", "source": "./tool"}]
+    assert catalog["metadata"]["version"] == "1.0.1"
+    subprocess.run(["bash", "-eo", "pipefail", "-c", script], env=env, check=True, capture_output=True)
+    assert json.loads(marketplace.read_text()) == catalog

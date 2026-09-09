@@ -4,6 +4,9 @@ inputs:
   command:
     description: CLI command to run (check, audit, sync, repair, or reconcile). Only check and audit are read-only.
     default: check
+  marketplace:
+    description: Set to true with command sync to reconcile and version marketplace catalogs.
+    default: "false"
   repository:
     description: Consumer Git repository directory.
     default: ${{ github.workspace }}
@@ -26,6 +29,7 @@ runs:
         VERSIONER_SOURCE: ${{ github.action_path }}
         VERSIONER_REPOSITORY: ${{ inputs.repository }}
         VERSIONER_COMMAND: ${{ inputs.command }}
+        VERSIONER_MARKETPLACE: ${{ inputs.marketplace }}
         VERSIONER_BASE: ${{ inputs.base-ref }}
         VERSIONER_HEAD: ${{ inputs.head-ref }}
         SETUPTOOLS_SCM_PRETEND_VERSION: 0+action
@@ -39,7 +43,12 @@ runs:
             fi
             args+=(--base-ref "$VERSIONER_BASE" --head-ref "$VERSIONER_HEAD")
             ;;
-          audit|sync|repair|reconcile) ;;
+          sync)
+            if [[ "$VERSIONER_MARKETPLACE" == "true" ]]; then
+              args+=(--marketplace)
+            fi
+            ;;
+          audit|repair|reconcile) ;;
           *)
             echo "Unsupported command: $VERSIONER_COMMAND" >&2
             exit 2
