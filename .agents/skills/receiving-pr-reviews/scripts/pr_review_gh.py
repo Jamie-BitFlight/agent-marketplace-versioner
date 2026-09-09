@@ -16,8 +16,6 @@ import subprocess
 import time
 from datetime import datetime
 
-from pydantic import TypeAdapter
-
 from pr_review_models import (
     FetchResult,
     ForcePushEvent,
@@ -31,6 +29,7 @@ from pr_review_models import (
     ReviewThreadsConnection,
     UnresolvedThread,
 )
+from pydantic import TypeAdapter
 
 _UNRESOLVED_THREADS_QUERY = """
 query($endCursor: String, $o: String!, $r: String!, $pr: Int!) {
