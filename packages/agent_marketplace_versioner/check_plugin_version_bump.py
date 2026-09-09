@@ -63,6 +63,8 @@ from agent_marketplace_versioner.native_manifests import (
     source_for_path,
 )
 
+_RENAME_STATUS_FIELDS = 3
+
 
 def _commit_ref(ref: str) -> str:
     if ref.startswith("-"):
@@ -127,12 +129,19 @@ def _moved_manifests_missing_bumps(
 ) -> list[Path]:
     base_only = [manifest for path, manifest in base_manifests.items() if path not in head_manifests]
     head_only = [manifest for path, manifest in head_manifests.items() if path not in base_manifests]
+    renamed_paths = {
+        Path(parts[2]): Path(parts[1])
+        for line in run_git_command(["diff", "--name-status", "-M", base, head]).splitlines()
+        if (parts := line.split("\t")) and len(parts) == _RENAME_STATUS_FIELDS and parts[0].startswith("R")
+    }
     missing: list[Path] = []
     for base_manifest in base_only:
         identity = _plugin_identity_at_ref(base, base_manifest)
         if identity is None:
             continue
         matches = [manifest for manifest in head_only if _plugin_identity_at_ref(head, manifest) == identity]
+        if not matches:
+            matches = [manifest for manifest in head_only if renamed_paths.get(manifest.path) == base_manifest.path]
         same_harness = [manifest for manifest in matches if manifest.path.parent.name == base_manifest.path.parent.name]
         if len(same_harness) == 1:
             matches = same_harness

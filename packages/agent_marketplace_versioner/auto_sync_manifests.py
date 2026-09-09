@@ -218,7 +218,7 @@ def _native_component_path(source_root: Path, filepath: Path, operation: str) ->
             component_type = (
                 "skill"
                 if filepath.name == "SKILL.md"
-                or (operation != "deleted" and skill_md.is_file() and is_git_visible(Path(), skill_md))
+                or (operation != "deleted" and skill_md in _staged_paths() and is_git_visible(Path(), skill_md))
                 else "other"
             )
             component_path = relative_path if component_type == "other" else f"skills/{skill_name}"
@@ -247,12 +247,22 @@ def _native_file_changes(manifests: list[NativeManifest], status: dict[str, list
     for manifest in manifests:
         if manifest.kind == "plugin":
             manifests_per_root[manifest_root(manifest)] += 1
+    deleted_names = {
+        data.get("name")
+        for path in status["deleted"]
+        if isinstance(data := read_ref_json("HEAD", path), dict) and isinstance(data.get("name"), str)
+    }
     for operation in ("added", "deleted", "modified"):
         for raw_path in status[operation]:
             filepath = Path(raw_path)
             source_root = source_for_path(manifests, filepath)
+            staged_data = _read_staged_json(filepath) if filepath in manifest_paths else None
+            staged_name = staged_data.get("name") if staged_data is not None else None
             if source_root is None or (
-                filepath in manifest_paths and operation != "modified" and manifests_per_root[source_root] == 1
+                filepath in manifest_paths
+                and operation != "modified"
+                and manifests_per_root[source_root] == 1
+                and staged_name not in deleted_names
             ):
                 continue
             changes[source_root][operation].append(_native_component_path(source_root, filepath, operation))
@@ -396,12 +406,11 @@ def _sync_native_marketplace(
     staged_names: bool = False,
 ) -> bool:
     marketplace_path = root / marketplace.path
-    if (
+    manual_version = (
         bump
         and marketplace.version_key_path is not None
         and _version_already_bumped(marketplace.path, list(marketplace.version_key_path))
-    ):
-        return False
+    )
     try:
         data: _MarketplaceJsonData = json.loads(marketplace_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -448,7 +457,7 @@ def _sync_native_marketplace(
         not bump or marketplace.version_key_path is None or not _marketplace_differs_from_head(marketplace.path)
     ):
         return False
-    if not bump or marketplace.version_key_path is None:
+    if not bump or marketplace.version_key_path is None or manual_version:
         if changed and not dry_run:
             _write_json_lf(marketplace_path, _format_json(data))
         return changed
