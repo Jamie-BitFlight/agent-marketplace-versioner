@@ -214,7 +214,13 @@ def _native_component_path(source_root: Path, filepath: Path, operation: str) ->
     relative_path = relative.as_posix()
     match parts:
         case ("skills", skill_name, *_) if not skill_name.startswith("."):
-            component_type = "other" if operation == "deleted" and filepath.name != "SKILL.md" else "skill"
+            skill_md = source_root / "skills" / skill_name / "SKILL.md"
+            component_type = (
+                "skill"
+                if filepath.name == "SKILL.md"
+                or (operation != "deleted" and skill_md.is_file() and is_git_visible(Path(), skill_md))
+                else "other"
+            )
             component_path = relative_path if component_type == "other" else f"skills/{skill_name}"
         case ("agents", _) if filepath.suffix == ".md":
             component_type = "agent"
@@ -288,13 +294,15 @@ def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
     return updated
 
 
-def _native_plugin_name(manifest: NativeManifest, root: Path) -> str:
+def _native_plugin_name(manifest: NativeManifest, root: Path, *, staged: bool = False) -> str:
     try:
-        data = json.loads((root / manifest.path).read_text(encoding="utf-8"))
+        data = _read_staged_json(manifest.path) if staged else None
+        if data is None:
+            data = json.loads((root / manifest.path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return manifest_root(manifest).name
-    if isinstance(data, dict) and isinstance(data.get("name"), str):
-        return data["name"]
+    if isinstance(data, dict) and isinstance(name := data.get("name"), str):
+        return name
     return manifest_root(manifest).name
 
 
@@ -385,6 +393,7 @@ def _sync_native_marketplace(
     dry_run: bool,
     base_ref: str | None,
     head_ref: str,
+    staged_names: bool = False,
 ) -> bool:
     marketplace_path = root / marketplace.path
     if (
@@ -409,9 +418,10 @@ def _sync_native_marketplace(
     deleted = [source for source in local_entries if source not in local_plugins]
     added = [source for source in local_plugins if source not in local_entries]
     renamed = {
-        source: _native_plugin_name(local_plugins[source], root)
+        source: _native_plugin_name(local_plugins[source], root, staged=staged_names)
         for source, entry in local_entries.items()
-        if source in local_plugins and entry["name"] != _native_plugin_name(local_plugins[source], root)
+        if source in local_plugins
+        and entry["name"] != _native_plugin_name(local_plugins[source], root, staged=staged_names)
     }
     plugins = data.get("plugins", [])
     data["plugins"] = [
@@ -426,7 +436,7 @@ def _sync_native_marketplace(
         manifest = local_plugins[source]
         relative_source = source.relative_to(marketplace_root(marketplace))
         data["plugins"].append({
-            "name": _native_plugin_name(manifest, root),
+            "name": _native_plugin_name(manifest, root, staged=staged_names),
             "source": f"./{relative_source.as_posix()}",
         })
     for source, name in renamed.items():
@@ -480,7 +490,14 @@ def sync_native_marketplaces(
             _write_json_lf(marketplace_path, _format_json(staged_data))
         try:
             changed = _sync_native_marketplace(
-                root, marketplace, manifests, bump=bump, dry_run=dry_run, base_ref=base_ref, head_ref=head_ref
+                root,
+                marketplace,
+                manifests,
+                bump=bump,
+                dry_run=dry_run,
+                base_ref=base_ref,
+                head_ref=head_ref,
+                staged_names=preserve_unstaged,
             )
             if changed:
                 updated.append(marketplace.path)
@@ -951,9 +968,9 @@ def _determine_bump_type(changes: ComponentChanges) -> Literal["major", "minor",
         ``"minor"`` when components were added (new feature),
         ``"patch"`` for pure modifications.
     """
-    if changes["deleted"]:
+    if any(component["component_type"] != "other" for component in changes["deleted"]):
         return "major"
-    if changes["added"]:
+    if any(component["component_type"] != "other" for component in changes["added"]):
         return "minor"
     return "patch"
 

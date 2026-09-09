@@ -111,11 +111,11 @@ def _native_manifests_at_ref(ref: str) -> list[NativeManifest]:
     return manifests
 
 
-def _plugin_identity_at_ref(ref: str, manifest: NativeManifest) -> tuple[str, str] | None:
+def _plugin_identity_at_ref(ref: str, manifest: NativeManifest) -> str | None:
     data = read_ref_json(ref, manifest.path)
     if not isinstance(data, dict) or not isinstance(name := data.get("name"), str):
         return None
-    return name, manifest.path.name
+    return name
 
 
 def _moved_manifests_missing_bumps(

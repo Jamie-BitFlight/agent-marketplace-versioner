@@ -389,9 +389,9 @@ def test_staged_sync_bumps_existing_manifest_when_adding_a_harness(
     git(tmp_path, "add", ".")
     monkeypatch.chdir(tmp_path)
 
-    assert sync_staged_manifests() == {Path("tool"): "1.1.0"}
-    assert json.loads(claude_manifest.read_text())["version"] == "1.1.0"
-    assert json.loads(codex_manifest.read_text())["version"] == "1.1.0"
+    assert sync_staged_manifests() == {Path("tool"): "1.0.1"}
+    assert json.loads(claude_manifest.read_text())["version"] == "1.0.1"
+    assert json.loads(codex_manifest.read_text())["version"] == "1.0.1"
 
 
 def test_reconcile_does_not_register_an_ignored_skill_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -408,3 +408,63 @@ def test_reconcile_does_not_register_an_ignored_skill_file(tmp_path: Path, monke
 
     assert CliRunner().invoke(app, ["reconcile", "--dry-run"]).exit_code == 0
     assert json.loads(manifest.read_text())["commands"] == []
+
+
+def test_staged_catalog_uses_the_staged_plugin_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    marketplace = tmp_path / ".claude-plugin/marketplace.json"
+    write_json(marketplace, {"plugins": []})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    manifest = tmp_path / "tool/.codex-plugin/plugin.json"
+    write_json(manifest, {"name": "staged", "version": "1.0.0"})
+    git(tmp_path, "add", ".")
+    write_json(manifest, {"name": "unstaged", "version": "1.0.0"})
+    monkeypatch.chdir(tmp_path)
+
+    sync_staged_manifests()
+
+    staged_catalog = json.loads(
+        subprocess.check_output(["git", "show", ":.claude-plugin/marketplace.json"], cwd=tmp_path)
+    )
+    assert staged_catalog["plugins"] == [{"name": "staged", "source": "./tool"}]
+
+
+def test_check_requires_a_bump_when_a_loose_manifest_moves_to_a_harness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    loose = tmp_path / "tool/tool.plugin.json"
+    write_json(loose, {"name": "tool", "version": "1.0.0"})
+    readme = tmp_path / "tool/README.md"
+    readme.write_text("before\n", encoding="utf-8")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    base = git(tmp_path, "rev-parse", "HEAD").strip()
+    git(tmp_path, "rm", "--quiet", loose.relative_to(tmp_path).as_posix())
+    harness = tmp_path / "tool/.codex-plugin/plugin.json"
+    write_json(harness, {"name": "tool", "version": "1.0.0"})
+    readme.write_text("after\n", encoding="utf-8")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "migrate")
+    monkeypatch.chdir(tmp_path)
+
+    assert check_native_version_bumps(base) == [Path("tool/.codex-plugin/plugin.json")]
+
+
+def test_staged_non_skill_file_does_not_register_a_skill_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    manifest = tmp_path / "tool/.codex-plugin/plugin.json"
+    write_json(manifest, {"name": "tool", "version": "1.0.0", "skills": []})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    note = tmp_path / "tool/skills/drafts/notes.txt"
+    note.parent.mkdir(parents=True)
+    note.write_text("draft\n", encoding="utf-8")
+    git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests() == {Path("tool"): "1.0.1"}
+    assert json.loads(manifest.read_text())["skills"] == []
