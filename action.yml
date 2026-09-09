@@ -1,0 +1,52 @@
+name: Agent Marketplace Versioner
+description: Check or synchronize native agent marketplace versions with the shared CLI.
+inputs:
+  command:
+    description: CLI command to run (check, audit, sync, repair, or reconcile). Only check and audit are read-only.
+    default: check
+  repository:
+    description: Consumer Git repository directory.
+    default: ${{ github.workspace }}
+  base-ref:
+    description: Base revision for check. The checkout must contain this revision.
+    default: ${{ github.event.pull_request.base.sha || github.event.before }}
+  head-ref:
+    description: Candidate revision for check.
+    default: ${{ github.event.pull_request.head.sha || github.sha }}
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v10.0.1
+      with:
+        python-version: "3.12"
+        enable-cache: false
+    - name: Run marketplace versioner
+      shell: bash
+      env:
+        VERSIONER_SOURCE: ${{ github.action_path }}
+        VERSIONER_REPOSITORY: ${{ inputs.repository }}
+        VERSIONER_COMMAND: ${{ inputs.command }}
+        VERSIONER_BASE: ${{ inputs.base-ref }}
+        VERSIONER_HEAD: ${{ inputs.head-ref }}
+        SETUPTOOLS_SCM_PRETEND_VERSION: 0+action
+      run: |
+        args=("$VERSIONER_COMMAND")
+        case "$VERSIONER_COMMAND" in
+          check)
+            if [[ -z "$VERSIONER_BASE" ]]; then
+              echo "base-ref is required for check" >&2
+              exit 2
+            fi
+            args+=(--base-ref "$VERSIONER_BASE" --head-ref "$VERSIONER_HEAD")
+            ;;
+          audit|sync|repair|reconcile) ;;
+          *)
+            echo "Unsupported command: $VERSIONER_COMMAND" >&2
+            exit 2
+            ;;
+        esac
+        VERSIONER_ENV=$(mktemp -d "$RUNNER_TEMP/agent-marketplace-versioner.XXXXXX")
+        export UV_PROJECT_ENVIRONMENT="$VERSIONER_ENV"
+        uv sync --project "$VERSIONER_SOURCE" --locked --no-dev --no-editable
+        cd "$VERSIONER_REPOSITORY"
+        "$VERSIONER_ENV/bin/agent-marketplace-versioner" "${args[@]}"

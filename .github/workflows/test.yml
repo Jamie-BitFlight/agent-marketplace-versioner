@@ -97,6 +97,64 @@ jobs:
       - run: uv sync --locked
       - run: uv run --locked mkdocs build --strict
 
+  integration:
+    name: Distributed hooks and composite action
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: versioner
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+      - name: Exercise both hook runners
+        working-directory: versioner
+        run: uv run --locked pytest tests/test_integrations.py -n 0 --no-cov
+      - name: Prepare consumer
+        id: consumer
+        env:
+          CONSUMER: ${{ runner.temp }}/consumer
+        run: uv run versioner/tests/integration_consumer.py prepare "$CONSUMER" >> "$GITHUB_OUTPUT"
+      - name: Reject an unversioned committed change
+        id: reject
+        continue-on-error: true
+        uses: ./versioner
+        with:
+          repository: ${{ runner.temp }}/consumer
+          base-ref: ${{ steps.consumer.outputs.base }}
+          head-ref: HEAD
+      - name: Check rejection and stage a change
+        env:
+          OUTCOME: ${{ steps.reject.outcome }}
+          CONSUMER: ${{ runner.temp }}/consumer
+        run: |
+          test "$OUTCOME" = failure
+          uv run versioner/tests/integration_consumer.py stage "$CONSUMER"
+      - name: Synchronize staged versions
+        uses: ./versioner
+        with:
+          command: sync
+          repository: ${{ runner.temp }}/consumer
+      - name: Repeat synchronization
+        uses: ./versioner
+        with:
+          command: sync
+          repository: ${{ runner.temp }}/consumer
+      - name: Verify one bump and commit it
+        env:
+          CONSUMER: ${{ runner.temp }}/consumer
+        run: uv run versioner/tests/integration_consumer.py verify "$CONSUMER"
+      - name: Accept the versioned change
+        uses: ./versioner
+        with:
+          repository: ${{ runner.temp }}/consumer
+          base-ref: ${{ steps.consumer.outputs.base }}
+          head-ref: HEAD
+
   coverage-summary:
     name: Coverage Summary
     runs-on: ubuntu-latest
