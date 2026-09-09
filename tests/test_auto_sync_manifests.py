@@ -1821,17 +1821,9 @@ def _make_plugin_on_disk(base: Path, plugin_dir_name: str, plugin_name: str | No
 class TestSyncMarketplaceMode:
     """Tests for _sync_marketplace_mode — post-merge CI path."""
 
-    def test_sync_marketplace_mode_bumps_patch_when_no_structural_changes(
+    def test_sync_marketplace_mode_does_not_bump_when_no_structural_changes(
         self, tmp_path: Path, monkeypatch: Any
     ) -> None:
-        """Verify patch bump when reconcile finds no structural changes.
-
-        Tests: _sync_marketplace_mode patch-bump path
-        How: One plugin on disk, marketplace already lists that plugin at 1.0.0;
-             reconcile finds no missing/stale, so _sync_marketplace_mode does a patch bump.
-        Why: Post-merge CI needs to reflect that plugin content changed even when
-             no plugins were added or removed.
-        """
         # Arrange
         _initialize_git_worktree(tmp_path)
         monkeypatch.chdir(tmp_path)
@@ -1850,7 +1842,7 @@ class TestSyncMarketplaceMode:
         assert exit_code == 0
         marketplace_json = tmp_path / ".claude-plugin" / "marketplace.json"
         data = json.loads(marketplace_json.read_text(encoding="utf-8"))
-        assert data["metadata"]["version"] == "1.0.1"
+        assert data["metadata"]["version"] == "1.0.0"
 
     def test_sync_marketplace_mode_delegates_to_reconcile_for_structural_changes(
         self, tmp_path: Path, monkeypatch: Any

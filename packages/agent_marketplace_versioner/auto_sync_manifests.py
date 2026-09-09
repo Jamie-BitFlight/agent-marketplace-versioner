@@ -298,8 +298,9 @@ def _marketplace_entry_source(entry: _MarketplacePluginEntry) -> str | None:
     return None
 
 
-def _bump_native_marketplace_version(data: _MarketplaceJsonData, marketplace: NativeManifest, *, deleted: bool) -> None:
-    bump_type: Literal["major", "minor"] = "major" if deleted else "minor"
+def _bump_native_marketplace_version(
+    data: _MarketplaceJsonData, marketplace: NativeManifest, bump_type: Literal["major", "minor", "patch"]
+) -> None:
     if marketplace.version_key_path == ("version",):
         current_version = data.get("version", "0.0.0")
         data["version"] = bump_version(current_version if isinstance(current_version, str) else "0.0.0", bump_type)
@@ -307,6 +308,12 @@ def _bump_native_marketplace_version(data: _MarketplaceJsonData, marketplace: Na
     metadata = data.setdefault("metadata", {})
     current_version = metadata.get("version", "0.0.0")
     metadata["version"] = bump_version(current_version if isinstance(current_version, str) else "0.0.0", bump_type)
+
+
+def _marketplace_differs_from_head(path: Path) -> bool:
+    if _GIT_PATH is None:
+        return False
+    return subprocess.run([_GIT_PATH, "diff", "--quiet", "HEAD", "--", path.as_posix()], check=False).returncode == 1
 
 
 def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run: bool = False) -> list[Path]:
@@ -356,10 +363,13 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run:
                 "name": _native_plugin_name(manifest, root),
                 "source": f"./{relative_source.as_posix()}",
             })
-        if not deleted and not added:
+        changed = bool(deleted or added)
+        if not changed and (
+            not bump or marketplace.version_key_path is None or not _marketplace_differs_from_head(marketplace.path)
+        ):
             continue
         if not bump or marketplace.version_key_path is None:
-            if deleted or added:
+            if changed:
                 if not dry_run:
                     _write_json_lf(marketplace_path, _format_json(data))
                 updated.append(marketplace.path)
@@ -367,7 +377,8 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run:
         if dry_run:
             updated.append(marketplace.path)
             continue
-        _bump_native_marketplace_version(data, marketplace, deleted=bool(deleted))
+        bump_type: Literal["major", "minor", "patch"] = "major" if deleted else "minor" if added else "patch"
+        _bump_native_marketplace_version(data, marketplace, bump_type)
         _write_json_lf(marketplace_path, _format_json(data))
         updated.append(marketplace.path)
     return updated
