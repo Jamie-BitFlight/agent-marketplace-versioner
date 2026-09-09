@@ -21,6 +21,13 @@ commit and publication.
 
 ## Git hook
 
+The pre-commit workflow is optional local-development support. Plugin version
+bumps act as cache busters so maintainers can refresh installed plugins within a
+session using their host's refresh or reinstall workflow; they do not automatically
+reload a running agent. Choose the local evaluation process that suits your project,
+including direct CLI use instead of installing a hook. No per-consumer adapter or
+versioner-specific configuration file is required.
+
 Add this to the consumer's `.pre-commit-config.yaml`, replacing the revision with
 a reviewed immutable commit SHA:
 
@@ -60,6 +67,23 @@ The action does not commit or push. It supports Linux and macOS Bash runners.
 For post-merge catalog reconciliation, use `command: sync` with `marketplace: true`.
 This invokes `sync --marketplace`. The default `marketplace: false` keeps ordinary
 staged-manifest synchronization; the input has no effect on other commands.
+
+Run this release-like workflow on the default branch after merges, separately from
+optional local cache-busting:
+
+```yaml
+- uses: actions/checkout@v7
+  with:
+    fetch-depth: 0
+- uses: Jamie-BitFlight/agent-marketplace-versioner@<full-commit-sha>
+  with:
+    command: sync
+    marketplace: true
+```
+
+It reconciles catalog entries and bumps existing marketplace versions, preserving
+versionless catalogs. Your publication workflow owns review, commit and push of the
+result; local plugin evaluation need not follow the same process.
 
 The action installs the source at its pinned checkout with `uv sync --locked`
 and no development dependencies. GitHub downloads actions without Git metadata,
