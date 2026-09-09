@@ -590,6 +590,7 @@ def resolve(
 
 @app.command(name="reply-and-resolve")
 def reply_and_resolve(
+    *,
     pr: Annotated[int, typer.Option(help="Pull request number.")],
     thread_id: Annotated[str, typer.Option(help="Review thread id, from `fetch`.")],
     comment_id: Annotated[int, typer.Option(help="Review comment databaseId of the thread's FIRST comment.")],
