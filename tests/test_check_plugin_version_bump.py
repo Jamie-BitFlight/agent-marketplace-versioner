@@ -659,6 +659,23 @@ class TestFindLastVersionBumpCommitIntegration:
         # ... and no "fatal: ..." noise reached this process's stderr getting there.
         assert capsys.readouterr().err == ""
 
+    def test_follows_manifest_rename_to_the_prior_version_bump(self, tmp_path: Path, monkeypatch: Any) -> None:
+        monkeypatch.chdir(tmp_path)
+        _git(tmp_path, "init")
+        _git(tmp_path, "config", "commit.gpgsign", "false")
+        _write_plugin_json(tmp_path, "old", "1.0.0")
+        content = tmp_path / "plugins" / "old" / "README.md"
+        content.write_text("before\n", encoding="utf-8")
+        _git(tmp_path, "add", ".")
+        _git(tmp_path, "commit", "-m", "base")
+        base = _git(tmp_path, "rev-parse", "HEAD")
+        _git(tmp_path, "mv", "plugins/old", "plugins/new")
+        (tmp_path / "plugins" / "new" / "README.md").write_text("after\n", encoding="utf-8")
+        _git(tmp_path, "add", ".")
+        _git(tmp_path, "commit", "-m", "move without bump")
+
+        assert gate.find_last_version_bump_commit("plugins/new/.claude-plugin/plugin.json") == base
+
 
 @pytest.mark.integration
 class TestCheckVersionBumpsIntegration:

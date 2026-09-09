@@ -87,6 +87,14 @@ def _git_paths(args: list[str]) -> list[Path]:
     return [Path(path.decode("utf-8", errors="surrogateescape")) for path in result.stdout.split(b"\0") if path]
 
 
+def _path_at_parent(commit: str, parent: str, path: str) -> str:
+    for line in run_git_command(["diff-tree", "--name-status", "-r", "-M", parent, commit]).splitlines():
+        match line.split("\t"):
+            case [status, old_path, new_path] if status.startswith("R") and new_path == path:
+                return old_path
+    return path
+
+
 def _native_manifests_at_ref(ref: str) -> list[NativeManifest]:
     manifests: list[NativeManifest] = []
     for path in _git_paths(["ls-tree", "-r", "--name-only", "-z", ref]):
@@ -125,6 +133,9 @@ def _moved_manifests_missing_bumps(
         if identity is None:
             continue
         matches = [manifest for manifest in head_only if _plugin_identity_at_ref(head, manifest) == identity]
+        same_harness = [manifest for manifest in matches if manifest.path.parent.name == base_manifest.path.parent.name]
+        if len(same_harness) == 1:
+            matches = same_harness
         if len(matches) != 1:
             continue
         head_manifest = matches[0]
@@ -219,9 +230,10 @@ def find_last_version_bump_commit(plugin_json_relpath: str) -> str | None:
         (root) commit is returned -- it is still a valid drift baseline.
         Returns None only when plugin.json has no commit history at all.
     """
-    commits = run_git_command(["log", "--format=%H", "--", plugin_json_relpath]).splitlines()
+    commits = run_git_command(["log", "--follow", "--format=%H", "--", plugin_json_relpath]).splitlines()
+    path = plugin_json_relpath
     for commit in commits:
-        version = extract_version_from_json(read_ref_json(commit, plugin_json_relpath), ["version"])
+        version = extract_version_from_json(read_ref_json(commit, path), ["version"])
         if version is None:
             continue
 
@@ -232,9 +244,11 @@ def find_last_version_bump_commit(plugin_json_relpath: str) -> str | None:
         if not parent_sha:
             return commit  # root commit -- version was set here, counts as the bump point
 
-        parent_version = extract_version_from_json(read_ref_json(parent_sha, plugin_json_relpath), ["version"])
+        parent_path = _path_at_parent(commit, parent_sha, path)
+        parent_version = extract_version_from_json(read_ref_json(parent_sha, parent_path), ["version"])
         if parent_version is None or version != parent_version:
             return commit
+        path = parent_path
 
     return None
 

@@ -94,6 +94,29 @@ def test_staged_content_change_bumps_all_native_manifests_at_an_arbitrary_root(
         assert json.loads((plugin_root / directory / "plugin.json").read_text(encoding="utf-8"))["version"] == "1.0.1"
 
 
+def test_staged_sync_does_not_absorb_unstaged_manifest_edits(tmp_path: Path, monkeypatch: Any) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "Test")
+    manifest = tmp_path / ".codex-plugin/plugin.json"
+    _write_json(manifest, {"name": "tool", "version": "1.0.0", "description": "committed"})
+    (tmp_path / "README.md").write_text("before\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    (tmp_path / "README.md").write_text("after\n", encoding="utf-8")
+    _git(tmp_path, "add", "README.md")
+    _write_json(manifest, {"name": "tool", "version": "1.0.0", "description": "unstaged"})
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path(): "1.0.1"}
+    assert json.loads(subprocess.check_output(["git", "show", ":.codex-plugin/plugin.json"], cwd=tmp_path)) == {
+        "name": "tool",
+        "version": "1.0.1",
+        "description": "committed",
+    }
+    assert json.loads(manifest.read_text(encoding="utf-8"))["description"] == "unstaged"
+
+
 @pytest.mark.parametrize("versions", [["0.3.1"] * 3, ["0.3.1", "1.3.1", "2.3.1"]])
 def test_staged_sync_uses_independent_head_versions_when_a_manifest_is_new_since_base(
     tmp_path: Path, monkeypatch: Any, versions: list[str]

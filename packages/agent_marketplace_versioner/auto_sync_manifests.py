@@ -253,22 +253,31 @@ def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
     Returns:
         The source roots whose version-owning manifests were updated.
     """
-    manifests = discover_manifests(root)
+    staged_paths = _staged_paths()
+    manifests = [manifest for manifest in discover_manifests(root) if manifest.path in staged_paths]
     updated: dict[Path, str] = {}
     for source_root, changes in _native_file_changes(manifests, get_git_status()).items():
         versions: list[str] = []
         changed = False
         for manifest in manifests_for_source(manifests, source_root):
+            unstaged_content = manifest.path.read_bytes() if _has_unstaged_change(manifest.path) else None
+            staged_data = _read_staged_json(manifest.path) if unstaged_content is not None else None
             manifest_updated, version = _update_plugin_manifest(
                 manifest.path, changes, sync_components=True, compare_to_head=True
             )
             changed |= manifest_updated
             versions.append(version)
             if manifest_updated:
-                _git_stage_file(manifest.path.as_posix())
+                if unstaged_content is None or staged_data is None:
+                    _git_stage_file(manifest.path.as_posix())
+                else:
+                    _update_component_arrays(staged_data, changes)
+                    staged_data["version"] = version
+                    _stage_json(manifest.path, staged_data)
+                    manifest.path.write_bytes(unstaged_content)
         if changed and versions:
             updated[source_root] = versions[0]
-    for path in sync_native_marketplaces(root, bump=False):
+    for path in sync_native_marketplaces(root, bump=False, manifests=manifests):
         _git_stage_file(path.as_posix())
     return updated
 
@@ -332,13 +341,16 @@ def _marketplace_differs_from_head(path: Path) -> bool:
     return subprocess.run([_GIT_PATH, "diff", "--quiet", "HEAD", "--", path.as_posix()], check=False).returncode == 1
 
 
-def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run: bool = False) -> list[Path]:
+def sync_native_marketplaces(
+    root: Path = Path(), *, bump: bool = True, dry_run: bool = False, manifests: list[NativeManifest] | None = None
+) -> list[Path]:
     """Reconcile every Git-visible native marketplace with local plugin manifests.
 
     Returns:
         Marketplace paths updated in this synchronization run.
     """
-    manifests = discover_manifests(root)
+    if manifests is None:
+        manifests = discover_manifests(root)
     updated: list[Path] = []
     for marketplace in (manifest for manifest in manifests if manifest.kind == "marketplace"):
         marketplace_path = root / marketplace.path
@@ -1273,6 +1285,44 @@ def _git_stage_file(filepath: str) -> None:
     result = subprocess.run([_GIT_PATH, "add", filepath], capture_output=True, text=True, check=False)
     if result.returncode != 0:
         sys.stderr.write(f"Warning: git add {filepath} failed: {result.stderr.strip()}\n")
+
+
+def _staged_paths() -> set[Path]:
+    return {
+        Path(path.decode("utf-8", errors="surrogateescape"))
+        for path in _run_git_bytes(["ls-files", "--cached", "-z"]).split(b"\0")
+        if path
+    }
+
+
+def _has_unstaged_change(path: Path) -> bool:
+    if _GIT_PATH is None:
+        return False
+    return subprocess.run([_GIT_PATH, "diff", "--quiet", "--", path.as_posix()], check=False).returncode == 1
+
+
+def _read_staged_json(path: Path) -> dict[str, list[str] | str] | None:
+    if _GIT_PATH is None:
+        return None
+    result = subprocess.run([_GIT_PATH, "show", f":{path.as_posix()}"], capture_output=True, check=False)
+    if result.returncode != 0:
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _stage_json(path: Path, data: dict[str, list[str] | str]) -> None:
+    if _GIT_PATH is None:
+        return
+    content = _format_json(data).encode()
+    blob = subprocess.run([_GIT_PATH, "hash-object", "-w", "--stdin"], input=content, capture_output=True, check=True)
+    subprocess.run(
+        [_GIT_PATH, "update-index", "--add", "--cacheinfo", f"100644,{blob.stdout.decode().strip()},{path.as_posix()}"],
+        check=True,
+    )
 
 
 def _discover_skills(plugin_dir: Path) -> list[str]:

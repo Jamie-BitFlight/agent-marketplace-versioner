@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 from tests.integration_consumer import git
 from typer.testing import CliRunner
 
-from agent_marketplace_versioner.auto_sync_manifests import sync_native_marketplaces
+from agent_marketplace_versioner.auto_sync_manifests import sync_native_marketplaces, sync_staged_manifests
 from agent_marketplace_versioner.check_plugin_version_bump import check_native_version_bumps
 from agent_marketplace_versioner.cli import app
 
@@ -135,6 +136,29 @@ def test_check_requires_version_bump_when_native_plugin_moves(tmp_path: Path, mo
     assert check_native_version_bumps(base) == [Path("plugins/new/.claude-plugin/plugin.json")]
 
 
+def test_check_requires_bumps_for_each_manifest_in_multi_harness_plugin_move(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    for harness in (".claude-plugin", ".codex-plugin"):
+        write_json(tmp_path / "plugins/old" / harness / "plugin.json", {"name": "tool", "version": "1.0.0"})
+    content = tmp_path / "plugins/old/README.md"
+    content.write_text("before\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    base = git(tmp_path, "rev-parse", "HEAD").strip()
+    git(tmp_path, "mv", "plugins/old", "plugins/new")
+    (tmp_path / "plugins/new/README.md").write_text("after\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "move")
+    monkeypatch.chdir(tmp_path)
+
+    assert check_native_version_bumps(base) == [
+        Path("plugins/new/.claude-plugin/plugin.json"),
+        Path("plugins/new/.codex-plugin/plugin.json"),
+    ]
+
+
 def test_reconcile_native_layout_dry_run_and_repair(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     initialize(tmp_path)
     manifest = tmp_path / "catalog/tool/.codex-plugin/plugin.json"
@@ -222,3 +246,29 @@ def test_sync_updates_local_catalog_name_after_plugin_rename(tmp_path: Path, mon
 
     assert sync_native_marketplaces() == [Path(".claude-plugin/marketplace.json")]
     assert json.loads(catalog.read_text())["plugins"] == [{"name": "new", "source": "./tool"}]
+
+
+def test_staged_sync_does_not_publish_untracked_plugin_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    catalog = tmp_path / ".claude-plugin/marketplace.json"
+    write_json(catalog, {"plugins": [{"name": "tool", "source": "./plugins/tool"}]})
+    plugin = tmp_path / "plugins/tool/.codex-plugin/plugin.json"
+    write_json(plugin, {"name": "tool", "version": "1.0.0"})
+    readme = tmp_path / "plugins/tool/README.md"
+    readme.parent.mkdir(parents=True, exist_ok=True)
+    readme.write_text("before\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    readme.write_text("after\n")
+    git(tmp_path, "add", str(readme))
+    write_json(tmp_path / "plugins/untracked/.codex-plugin/plugin.json", {"name": "untracked", "version": "1.0.0"})
+    monkeypatch.chdir(tmp_path)
+
+    sync_staged_manifests()
+
+    staged_catalog = json.loads(
+        subprocess.check_output(["git", "show", ":.claude-plugin/marketplace.json"], cwd=tmp_path)
+    )
+    assert staged_catalog["plugins"] == [{"name": "tool", "source": "./plugins/tool"}]
