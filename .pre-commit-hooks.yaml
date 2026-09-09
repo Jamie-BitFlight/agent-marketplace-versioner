@@ -1,0 +1,7 @@
+- id: agent-marketplace-versioner
+  name: Synchronize staged agent marketplace versions
+  entry: agent-marketplace-versioner sync
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]
