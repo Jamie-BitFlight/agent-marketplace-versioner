@@ -13,7 +13,7 @@ The distributable hook and composite GitHub Action invoke the same CLI.
 | `sync --marketplace` | Reconcile and version native marketplace catalogs. |
 | `repair` | Apply manifest repairs and report results as JSON. |
 | `reconcile --dry-run` | Preview full reconciliation; exits 1 when changes are needed. |
-| `reconcile` | Apply full reconciliation. |
+| `reconcile` | Repair explicit native component arrays and catalog membership; catalog versions are unchanged. |
 
 Both revisions must exist locally for `check`. A shallow checkout may need
 additional history. Mutation commands change local files; the caller owns review,
