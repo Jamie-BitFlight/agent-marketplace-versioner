@@ -109,7 +109,7 @@ class _MarketplacePluginEntry(TypedDict):
     """Typed plugin entry in the marketplace.json plugins list."""
 
     name: str
-    source: str
+    source: str | dict[str, object]
 
 
 class _MarketplaceJsonData(TypedDict, total=False):
@@ -271,10 +271,22 @@ def _marketplace_local_entries(
     entries: dict[Path, _MarketplacePluginEntry] = {}
     plugins = data.get("plugins", [])
     for entry in plugins:
-        source = entry.get("source")
-        if isinstance(source, str) and source.startswith("."):
+        source = _marketplace_entry_source(entry)
+        if source is not None:
             entries[marketplace_root(marketplace) / source.removeprefix("./")] = entry
     return entries
+
+
+def _marketplace_entry_source(entry: _MarketplacePluginEntry) -> str | None:
+    source = entry.get("source")
+    if isinstance(source, str):
+        return source if source.startswith(".") else None
+    if _is_str_dict(source) and source.get("source") == "local":
+        path = source.get("path")
+        if not isinstance(path, str):
+            return None
+        return path if path.startswith(".") else None
+    return None
 
 
 def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run: bool = False) -> list[Path]:
@@ -313,8 +325,8 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run:
             entry
             for entry in plugins
             if not (
-                isinstance(entry.get("source"), str)
-                and marketplace_root(marketplace) / entry["source"].removeprefix("./") in deleted
+                (source := _marketplace_entry_source(entry)) is not None
+                and marketplace_root(marketplace) / source.removeprefix("./") in deleted
             )
         ]
         for source in sorted(added):

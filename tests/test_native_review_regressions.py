@@ -67,6 +67,38 @@ def test_empty_local_catalog_bootstraps_nonignored_native_roots(
     assert sync_native_marketplaces() == []
 
 
+def test_object_local_sources_are_already_catalogued(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    catalog = tmp_path / ".agents/plugins/marketplace.json"
+    write_json(
+        catalog,
+        {
+            "plugins": [
+                {
+                    "name": "tool",
+                    "source": {"source": "local", "path": "./plugins/tool"},
+                    "policy": {"installation": "AVAILABLE"},
+                }
+            ]
+        },
+    )
+    write_json(tmp_path / "plugins/tool/.claude-plugin/plugin.json", {"name": "tool", "version": "1.0.0"})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_native_marketplaces(bump=False) == []
+    assert json.loads(catalog.read_text()) == {
+        "plugins": [
+            {
+                "name": "tool",
+                "source": {"source": "local", "path": "./plugins/tool"},
+                "policy": {"installation": "AVAILABLE"},
+            }
+        ]
+    }
+
+
 def test_reconcile_native_layout_dry_run_and_repair(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     initialize(tmp_path)
     manifest = tmp_path / "catalog/tool/.codex-plugin/plugin.json"
