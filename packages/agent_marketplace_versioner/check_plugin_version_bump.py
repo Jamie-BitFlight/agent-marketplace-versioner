@@ -124,6 +124,40 @@ def _native_manifests_at_ref(ref: str) -> list[NativeManifest]:
     return manifests
 
 
+def _plugin_identity_at_ref(ref: str, manifest: NativeManifest) -> tuple[str, str, str] | None:
+    data = read_ref_json(ref, manifest.path)
+    if not isinstance(data, dict) or not isinstance(name := data.get("name"), str):
+        return None
+    return name, manifest.path.name, manifest.path.parent.name
+
+
+def _moved_manifests_missing_bumps(
+    base: str,
+    head: str,
+    base_manifests: dict[Path, NativeManifest],
+    head_manifests: dict[Path, NativeManifest],
+    changed_roots: set[Path],
+) -> list[Path]:
+    base_only = [manifest for path, manifest in base_manifests.items() if path not in head_manifests]
+    head_only = [manifest for path, manifest in head_manifests.items() if path not in base_manifests]
+    missing: list[Path] = []
+    for base_manifest in base_only:
+        identity = _plugin_identity_at_ref(base, base_manifest)
+        if identity is None:
+            continue
+        matches = [manifest for manifest in head_only if _plugin_identity_at_ref(head, manifest) == identity]
+        if len(matches) != 1:
+            continue
+        head_manifest = matches[0]
+        if manifest_root(head_manifest) not in changed_roots:
+            continue
+        base_version = extract_version_from_json(read_ref_json(base, base_manifest.path), ["version"])
+        head_version = extract_version_from_json(read_ref_json(head, head_manifest.path), ["version"])
+        if base_version is not None and (head_version is None or head_version <= base_version):
+            missing.append(head_manifest.path)
+    return missing
+
+
 def check_native_version_bumps(base_ref: str, head_ref: str = "HEAD") -> list[Path]:
     """Return changed native manifests whose declared version did not increase.
 
@@ -154,7 +188,8 @@ def check_native_version_bumps(base_ref: str, head_ref: str = "HEAD") -> list[Pa
         head_version = extract_version_from_json(read_ref_json(head, manifest.path), ["version"])
         if base_version is not None and (head_version is None or head_version <= base_version):
             missing.append(manifest.path)
-    return missing
+    missing.extend(_moved_manifests_missing_bumps(base, head, base_manifests, head_manifests, changed_roots))
+    return sorted(set(missing), key=lambda path: path.as_posix())
 
 
 def plugins_with_diff(base_ref: str, head_ref: str = "HEAD") -> set[str]:

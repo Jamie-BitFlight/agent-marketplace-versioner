@@ -99,6 +99,42 @@ def test_object_local_sources_are_already_catalogued(tmp_path: Path, monkeypatch
     }
 
 
+def test_relative_catalog_source_with_parent_traversal_is_already_catalogued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    catalog = tmp_path / "catalog/.claude-plugin/marketplace.json"
+    write_json(catalog, {"version": "1.0.0", "plugins": [{"name": "tool", "source": "../shared/tool"}]})
+    write_json(tmp_path / "shared/tool/.claude-plugin/plugin.json", {"name": "tool", "version": "1.0.0"})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_native_marketplaces() == []
+    assert json.loads(catalog.read_text()) == {
+        "version": "1.0.0",
+        "plugins": [{"name": "tool", "source": "../shared/tool"}],
+    }
+
+
+def test_check_requires_version_bump_when_native_plugin_moves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    old_manifest = Path("plugins/old/.claude-plugin/plugin.json")
+    write_json(tmp_path / old_manifest, {"name": "tool", "version": "1.0.0"})
+    content = tmp_path / "plugins/old/README.md"
+    content.write_text("before\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    base = git(tmp_path, "rev-parse", "HEAD").strip()
+    git(tmp_path, "mv", "plugins/old", "plugins/new")
+    (tmp_path / "plugins/new/README.md").write_text("after\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "move")
+    monkeypatch.chdir(tmp_path)
+
+    assert check_native_version_bumps(base) == [Path("plugins/new/.claude-plugin/plugin.json")]
+
+
 def test_reconcile_native_layout_dry_run_and_repair(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     initialize(tmp_path)
     manifest = tmp_path / "catalog/tool/.codex-plugin/plugin.json"
@@ -155,3 +191,19 @@ def test_reconcile_ignores_gitignored_components(tmp_path: Path, monkeypatch: py
 
     assert CliRunner().invoke(app, ["reconcile", "--dry-run"]).exit_code == 0
     assert json.loads(manifest.read_text())["skills"] == []
+
+
+def test_reconcile_ignores_nested_gitignored_invocable_skills(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    manifest = tmp_path / "tool/.claude-plugin/plugin.json"
+    write_json(manifest, {"name": "tool", "version": "1.0.0", "commands": []})
+    ignored_skill = tmp_path / "tool/skills/group/private/SKILL.md"
+    ignored_skill.parent.mkdir(parents=True)
+    ignored_skill.write_text("---\nname: private\n---\n")
+    (tmp_path / ".gitignore").write_text("tool/skills/group/private/\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    monkeypatch.chdir(tmp_path)
+
+    assert CliRunner().invoke(app, ["reconcile", "--dry-run"]).exit_code == 0
+    assert json.loads(manifest.read_text())["commands"] == []

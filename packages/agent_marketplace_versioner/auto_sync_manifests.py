@@ -275,14 +275,14 @@ def _native_plugin_name(manifest: NativeManifest, root: Path) -> str:
 
 
 def _marketplace_local_entries(
-    data: _MarketplaceJsonData, marketplace: NativeManifest
+    data: _MarketplaceJsonData, marketplace: NativeManifest, root: Path
 ) -> dict[Path, _MarketplacePluginEntry]:
     entries: dict[Path, _MarketplacePluginEntry] = {}
     plugins = data.get("plugins", [])
     for entry in plugins:
         source = _marketplace_entry_source(entry)
-        if source is not None:
-            entries[marketplace_root(marketplace) / source.removeprefix("./")] = entry
+        if source is not None and (path := _marketplace_local_source_path(source, marketplace, root)) is not None:
+            entries[path] = entry
     return entries
 
 
@@ -296,6 +296,13 @@ def _marketplace_entry_source(entry: _MarketplacePluginEntry) -> str | None:
             return None
         return path if path.startswith(".") else None
     return None
+
+
+def _marketplace_local_source_path(source: str, marketplace: NativeManifest, root: Path) -> Path | None:
+    try:
+        return (root / marketplace_root(marketplace) / source).resolve().relative_to(root.resolve())
+    except ValueError:
+        return None
 
 
 def _bump_native_marketplace_version(
@@ -336,7 +343,7 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run:
             data: _MarketplaceJsonData = json.loads(marketplace_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        local_entries = _marketplace_local_entries(data, marketplace)
+        local_entries = _marketplace_local_entries(data, marketplace, root)
         source_parents = {source.parent for source in local_entries}
         local_plugins = {
             manifest_root(manifest): manifest
@@ -353,7 +360,7 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run:
             for entry in plugins
             if not (
                 (source := _marketplace_entry_source(entry)) is not None
-                and marketplace_root(marketplace) / source.removeprefix("./") in deleted
+                and _marketplace_local_source_path(source, marketplace, root) in deleted
             )
         ]
         for source in sorted(added):
@@ -1401,7 +1408,7 @@ def _discover_invocable_skills(plugin_dir: Path) -> list[str]:
 
         # Check nested skill directories (e.g., skills/testing/*)
         for nested in sorted(item.iterdir()):
-            if nested.is_dir() and not nested.name.startswith("."):
+            if nested.is_dir() and not nested.name.startswith(".") and is_git_visible(Path(), nested):
                 nested_skill_md = nested / "SKILL.md"
                 if nested_skill_md.is_file() and _is_skill_user_invocable(nested_skill_md):
                     found.append(f"./skills/{item.name}/{nested.name}")
