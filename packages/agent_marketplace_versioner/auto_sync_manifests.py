@@ -1076,11 +1076,8 @@ def update_marketplace_json(plugin_changes: MarketplaceChanges) -> bool:
     """Update marketplace.json based on plugin changes.
 
     Args:
-        plugin_changes: {
-            'added': ['plugin-name'],
-            'deleted': ['plugin-name'],
-            'modified': [('plugin-name', 'new-version')],
-        }
+        plugin_changes: Added, deleted, and modified plugin names grouped by
+            change type.
 
     Returns:
         updated: bool

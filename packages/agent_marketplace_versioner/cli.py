@@ -5,7 +5,12 @@ from __future__ import annotations
 
 import typer
 
-from agent_marketplace_versioner.auto_sync_manifests import sync_native_marketplaces, sync_staged_manifests
+from agent_marketplace_versioner.auto_sync_manifests import (
+    reconcile as reconcile_manifests,
+    sync_native_marketplaces,
+    sync_staged_manifests,
+)
+from agent_marketplace_versioner.check_plugin_version_bump import _run_audit, _run_check, _run_repair
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -28,3 +33,32 @@ def sync(
         return
     for source, version in sync_staged_manifests().items():
         typer.echo(f"{source.as_posix()} {version}")
+
+
+@app.command()
+def check(
+    base_ref: str | None = typer.Option(None, "--base-ref", help="Git base ref; defaults to origin/main or main."),
+    head_ref: str | None = typer.Option(None, "--head-ref", help="Git head ref; defaults to HEAD."),
+) -> None:
+    """Fail when changed native manifests did not increase their version."""
+    raise typer.Exit(_run_check(base_ref, head_ref))
+
+
+@app.command()
+def audit() -> None:
+    """Report native manifests with content drift after their last version bump."""
+    raise typer.Exit(_run_audit())
+
+
+@app.command()
+def repair() -> None:
+    """Patch-bump native manifests with content drift after their last version bump."""
+    raise typer.Exit(_run_repair())
+
+
+@app.command()
+def reconcile(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report manifest drift without changing files."),
+) -> None:
+    """Reconcile production plugin component arrays and marketplace membership."""
+    raise typer.Exit(reconcile_manifests(dry_run=dry_run))
