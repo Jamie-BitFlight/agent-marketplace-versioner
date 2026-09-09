@@ -46,6 +46,9 @@ runs:
           sync)
             if [[ "$VERSIONER_MARKETPLACE" == "true" ]]; then
               args+=(--marketplace)
+              if [[ -n "$VERSIONER_BASE" ]]; then
+                args+=(--base-ref "$VERSIONER_BASE" --head-ref "$VERSIONER_HEAD")
+              fi
             fi
             ;;
           audit|repair|reconcile) ;;

@@ -25,10 +25,12 @@ def sync(
     marketplace: bool = typer.Option(
         False, "--marketplace", help="Reconcile and version native marketplace manifests."
     ),
+    base_ref: str | None = typer.Option(None, "--base-ref", help="Base revision for a marketplace version bump."),
+    head_ref: str = typer.Option("HEAD", "--head-ref", help="Candidate revision for a marketplace version bump."),
 ) -> None:
     """Synchronize staged native manifests or post-merge marketplaces."""
     if marketplace:
-        for path in sync_native_marketplaces():
+        for path in sync_native_marketplaces(base_ref=base_ref, head_ref=head_ref):
             typer.echo(path.as_posix())
         return
     for source, version in sync_staged_manifests().items():

@@ -73,6 +73,31 @@ def test_check_reports_a_missing_version_bump_in_a_real_repository(
     assert "catalog/tool/.codex-plugin/plugin.json" in result.output
 
 
+def test_marketplace_sync_bumps_for_a_versioned_plugin_change_since_the_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _initialize_repository(tmp_path)
+    plugin = _write_plugin_manifest(tmp_path, "catalog/tool/.codex-plugin/plugin.json")
+    content = tmp_path / "catalog" / "tool" / "README.md"
+    content.write_text("before\n", encoding="utf-8")
+    marketplace = tmp_path / "catalog" / ".codex-plugin" / "marketplace.json"
+    marketplace.parent.mkdir(parents=True)
+    marketplace.write_text(
+        json.dumps({"metadata": {"version": "1.0.0"}, "plugins": [{"name": "tool", "source": "./tool"}]}) + "\n",
+        encoding="utf-8",
+    )
+    base_ref = _commit_all(tmp_path, "base")
+    content.write_text("after\n", encoding="utf-8")
+    plugin.write_text(json.dumps({"name": "tool", "version": "1.0.1"}) + "\n", encoding="utf-8")
+    _commit_all(tmp_path, "versioned plugin change")
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, ["sync", "--marketplace", "--base-ref", base_ref, "--head-ref", "HEAD"])
+
+    assert result.exit_code == 0
+    assert json.loads(marketplace.read_text(encoding="utf-8"))["metadata"]["version"] == "1.0.1"
+
+
 def test_audit_and_repair_report_and_fix_real_repository_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _initialize_repository(tmp_path)
     manifest = _write_plugin_manifest(tmp_path, "catalog/tool/.codex-plugin/plugin.json")

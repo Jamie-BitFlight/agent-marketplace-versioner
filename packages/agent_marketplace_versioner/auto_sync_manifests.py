@@ -341,8 +341,25 @@ def _marketplace_differs_from_head(path: Path) -> bool:
     return subprocess.run([_GIT_PATH, "diff", "--quiet", "HEAD", "--", path.as_posix()], check=False).returncode == 1
 
 
+def _source_differs_between_refs(root: Path, source: Path, base_ref: str | None, head_ref: str) -> bool:
+    if _GIT_PATH is None or base_ref is None:
+        return False
+    return (
+        subprocess.run(
+            [_GIT_PATH, "-C", str(root), "diff", "--quiet", base_ref, head_ref, "--", source.as_posix()], check=False
+        ).returncode
+        == 1
+    )
+
+
 def sync_native_marketplaces(
-    root: Path = Path(), *, bump: bool = True, dry_run: bool = False, manifests: list[NativeManifest] | None = None
+    root: Path = Path(),
+    *,
+    bump: bool = True,
+    dry_run: bool = False,
+    manifests: list[NativeManifest] | None = None,
+    base_ref: str | None = None,
+    head_ref: str = "HEAD",
 ) -> list[Path]:
     """Reconcile every Git-visible native marketplace with local plugin manifests.
 
@@ -398,7 +415,9 @@ def sync_native_marketplaces(
             })
         for source, name in renamed.items():
             local_entries[source]["name"] = name
-        changed = bool(deleted or added or renamed)
+        changed = bool(deleted or added or renamed) or any(
+            _source_differs_between_refs(root, source, base_ref, head_ref) for source in local_plugins
+        )
         if not changed and (
             not bump or marketplace.version_key_path is None or not _marketplace_differs_from_head(marketplace.path)
         ):
