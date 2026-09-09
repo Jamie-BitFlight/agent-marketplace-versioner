@@ -342,3 +342,69 @@ def test_staged_sync_preserves_an_unstaged_marketplace_edit(tmp_path: Path, monk
         "description": "local",
         "plugins": [{"name": "tool", "source": "./plugins/tool"}],
     }
+
+
+def test_marketplace_sync_does_not_bump_for_its_own_prior_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    marketplace = tmp_path / "tool/.claude-plugin/marketplace.json"
+    write_json(marketplace, {"version": "1.0.0", "plugins": [{"name": "tool", "source": "./"}]})
+    write_json(tmp_path / "tool/.codex-plugin/plugin.json", {"name": "tool", "version": "1.0.0"})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    base = git(tmp_path, "rev-parse", "HEAD").strip()
+    write_json(marketplace, {"version": "1.0.1", "plugins": [{"name": "tool", "source": "./"}]})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "catalog bump")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_native_marketplaces(base_ref=base) == []
+    assert json.loads(marketplace.read_text())["version"] == "1.0.1"
+
+
+def test_marketplace_sync_fails_for_an_unavailable_revision(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    marketplace = tmp_path / ".claude-plugin/marketplace.json"
+    write_json(marketplace, {"version": "1.0.0", "plugins": [{"name": "tool", "source": "./tool"}]})
+    write_json(tmp_path / "tool/.codex-plugin/plugin.json", {"name": "tool", "version": "1.0.0"})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(RuntimeError, match="bad revision"):
+        sync_native_marketplaces(base_ref="missing", head_ref="HEAD")
+
+
+def test_staged_sync_bumps_existing_manifest_when_adding_a_harness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    claude_manifest = tmp_path / "tool/.claude-plugin/plugin.json"
+    write_json(claude_manifest, {"name": "tool", "version": "1.0.0"})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    codex_manifest = tmp_path / "tool/.codex-plugin/plugin.json"
+    write_json(codex_manifest, {"name": "tool", "version": "1.0.0"})
+    git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests() == {Path("tool"): "1.1.0"}
+    assert json.loads(claude_manifest.read_text())["version"] == "1.1.0"
+    assert json.loads(codex_manifest.read_text())["version"] == "1.1.0"
+
+
+def test_reconcile_does_not_register_an_ignored_skill_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    manifest = tmp_path / "tool/.claude-plugin/plugin.json"
+    write_json(manifest, {"name": "tool", "version": "1.0.0", "commands": []})
+    skill = tmp_path / "tool/skills/private/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nuser-invocable: true\n---\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("tool/skills/private/SKILL.md\n", encoding="utf-8")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    monkeypatch.chdir(tmp_path)
+
+    assert CliRunner().invoke(app, ["reconcile", "--dry-run"]).exit_code == 0
+    assert json.loads(manifest.read_text())["commands"] == []

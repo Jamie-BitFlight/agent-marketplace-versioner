@@ -237,11 +237,17 @@ def _native_component_path(source_root: Path, filepath: Path, operation: str) ->
 def _native_file_changes(manifests: list[NativeManifest], status: dict[str, list[str]]) -> dict[Path, ComponentChanges]:
     changes: dict[Path, ComponentChanges] = defaultdict(lambda: {"added": [], "deleted": [], "modified": []})
     manifest_paths = {manifest.path for manifest in manifests if manifest.kind == "plugin"}
+    manifests_per_root: dict[Path, int] = defaultdict(int)
+    for manifest in manifests:
+        if manifest.kind == "plugin":
+            manifests_per_root[manifest_root(manifest)] += 1
     for operation in ("added", "deleted", "modified"):
         for raw_path in status[operation]:
             filepath = Path(raw_path)
             source_root = source_for_path(manifests, filepath)
-            if source_root is None or (filepath in manifest_paths and operation != "modified"):
+            if source_root is None or (
+                filepath in manifest_paths and operation != "modified" and manifests_per_root[source_root] == 1
+            ):
                 continue
             changes[source_root][operation].append(_native_component_path(source_root, filepath, operation))
     return changes
@@ -341,15 +347,33 @@ def _marketplace_differs_from_head(path: Path) -> bool:
     return subprocess.run([_GIT_PATH, "diff", "--quiet", "HEAD", "--", path.as_posix()], check=False).returncode == 1
 
 
-def _source_differs_between_refs(root: Path, source: Path, base_ref: str | None, head_ref: str) -> bool:
+def _source_differs_between_refs(
+    root: Path, source: Path, marketplace_path: Path, base_ref: str | None, head_ref: str
+) -> bool:
     if _GIT_PATH is None or base_ref is None:
         return False
-    return (
-        subprocess.run(
-            [_GIT_PATH, "-C", str(root), "diff", "--quiet", base_ref, head_ref, "--", source.as_posix()], check=False
-        ).returncode
-        == 1
+    result = subprocess.run(
+        [
+            _GIT_PATH,
+            "-C",
+            str(root),
+            "diff",
+            "--quiet",
+            base_ref,
+            head_ref,
+            "--",
+            source.as_posix(),
+            f":(exclude){marketplace_path.as_posix()}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
     )
+    if result.returncode == 0:
+        return False
+    if result.returncode == 1:
+        return True
+    raise RuntimeError(result.stderr.strip() or f"cannot compare {base_ref} and {head_ref}")
 
 
 def _sync_native_marketplace(
@@ -408,7 +432,7 @@ def _sync_native_marketplace(
     for source, name in renamed.items():
         local_entries[source]["name"] = name
     changed = bool(deleted or added or renamed) or any(
-        _source_differs_between_refs(root, source, base_ref, head_ref) for source in local_plugins
+        _source_differs_between_refs(root, source, marketplace.path, base_ref, head_ref) for source in local_plugins
     )
     if not changed and (
         not bump or marketplace.version_key_path is None or not _marketplace_differs_from_head(marketplace.path)
@@ -1524,14 +1548,18 @@ def _discover_invocable_skills(plugin_dir: Path) -> list[str]:
             continue
 
         skill_md = item / "SKILL.md"
-        if skill_md.is_file() and _is_skill_user_invocable(skill_md):
+        if skill_md.is_file() and is_git_visible(Path(), skill_md) and _is_skill_user_invocable(skill_md):
             found.append(f"./skills/{item.name}")
 
         # Check nested skill directories (e.g., skills/testing/*)
         for nested in sorted(item.iterdir()):
             if nested.is_dir() and not nested.name.startswith(".") and is_git_visible(Path(), nested):
                 nested_skill_md = nested / "SKILL.md"
-                if nested_skill_md.is_file() and _is_skill_user_invocable(nested_skill_md):
+                if (
+                    nested_skill_md.is_file()
+                    and is_git_visible(Path(), nested_skill_md)
+                    and _is_skill_user_invocable(nested_skill_md)
+                ):
                     found.append(f"./skills/{item.name}/{nested.name}")
 
     return found
