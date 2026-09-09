@@ -2,18 +2,20 @@
 
 <!-- start title -->
 
-# agent-marketplace-versioner
+# <img src=".github/ghadocs/branding.svg" width="60px" align="center" alt="branding<icon:activity color:blue>" /> GitHub Action: Agent Marketplace Versioner
 
 <!-- end title -->
 <!-- start badges -->
+
+<a href="https://github.com/Jamie-BitFlight/agent-marketplace-versioner/releases/latest"><img src="https://img.shields.io/github/v/release/Jamie-BitFlight/agent-marketplace-versioner?display_name=tag&amp;sort=semver&amp;logo=github&amp;style=flat-square" alt="Release by tag" /></a><a href="https://github.com/Jamie-BitFlight/agent-marketplace-versioner/releases/latest"><img src="https://img.shields.io/github/release-date/Jamie-BitFlight/agent-marketplace-versioner?display_name=tag&amp;sort=semver&amp;logo=github&amp;style=flat-square" alt="Release by date" /></a><img src="https://img.shields.io/github/last-commit/Jamie-BitFlight/agent-marketplace-versioner?logo=github&amp;style=flat-square" alt="Commit" /><a href="https://github.com/Jamie-BitFlight/agent-marketplace-versioner/issues"><img src="https://img.shields.io/github/issues/Jamie-BitFlight/agent-marketplace-versioner?logo=github&amp;style=flat-square" alt="Open Issues" /></a><img src="https://img.shields.io/github/downloads/Jamie-BitFlight/agent-marketplace-versioner/total?logo=github&amp;style=flat-square" alt="Downloads" />
+
 <!-- end badges -->
 
 </div>
 
 <!-- start description -->
 
-Check and synchronize versions in native agent plugin and marketplace manifests.
-The CLI, GitHub Action and Git hooks use the same implementation in the consumer repository.
+Check or synchronize native agent marketplace versions with the shared CLI.
 
 <!-- end description -->
 
@@ -21,97 +23,53 @@ Documentation: <https://bitflight.io/agent-marketplace-versioner/>.
 
 <!-- start usage -->
 
-### Choose your maintainer workflow
-
-Use the optional pre-commit hook for local evaluation: changed plugin manifests
-receive new versions that act as cache busters, enabling refreshed installs within
-a development session. Refresh or reinstall through your host's supported workflow;
-a version bump does not automatically reload a running agent.
-
-Use post-merge `sync --marketplace` on the default branch for release-like catalog
-and marketplace-version reconciliation. These are separate workflows: maintainers
-choose their local evaluation process and can use the CLI instead of installing a
-hook. Both use the shared implementation without a per-consumer adapter or
-versioner-specific configuration file.
-
-### GitHub Action
-
-Pin this repository to a reviewed commit SHA. The default command is a read-only
-base/head check; checkout must include both revisions.
-
 ```yaml
-- uses: actions/checkout@v7
+- uses: Jamie-BitFlight/agent-marketplace-versioner@v0.0.0
   with:
-    fetch-depth: 0
-- uses: Jamie-BitFlight/agent-marketplace-versioner@<full-commit-sha>
-  with:
-    base-ref: ${{ github.event.pull_request.base.sha }}
-    head-ref: ${{ github.event.pull_request.head.sha }}
+    # Description: CLI command to run (check, audit, sync, repair, or reconcile). Only
+    # check and audit are read-only.
+    # 
+    # Default: check
+    command: ''
+
+    # Description: Set to true with command sync to reconcile and version marketplace
+    # catalogs.
+    # 
+    # Default: false
+    marketplace: ''
+
+    # Description: Consumer Git repository directory.
+    # 
+    # Default: ${{ github.workspace }}
+    repository: ''
+
+    # Description: Base revision for check. The checkout must contain this revision.
+    # 
+    # Default: ${{ github.event.pull_request.base.sha || github.event.before }}
+    base-ref: ''
+
+    # Description: Candidate revision for check.
+    # 
+    # Default: ${{ github.event.pull_request.head.sha || github.sha }}
+    head-ref: ''
 ```
-
-### Git hook (prek or pre-commit)
-
-```yaml
-repos:
-  - repo: https://github.com/Jamie-BitFlight/agent-marketplace-versioner
-    rev: <full-commit-sha>
-    hooks:
-      - id: agent-marketplace-versioner
-```
-
-Run `prek install` or `pre-commit install` in the consumer repository. The hook
-installs the pinned Python package, runs once without filename arguments, and
-updates and stages affected versions. Repeated runs preserve the same bump.
-
-### Post-merge marketplace reconciliation
-
-In a workflow triggered by pushes to your default branch after merges, use:
-
-```yaml
-- uses: actions/checkout@v7
-  with:
-    fetch-depth: 0
-- uses: Jamie-BitFlight/agent-marketplace-versioner@<full-commit-sha>
-  with:
-    command: sync
-    marketplace: true
-```
-
-This runs `agent-marketplace-versioner sync --marketplace`, reconciling catalog
-entries and bumping an existing marketplace version. Versionless catalogs stay
-versionless. Your publication workflow owns review, commit and push of the result;
-the action does not publish automatically.
-
-### CLI
-
-```sh
-uv tool install 'git+https://github.com/Jamie-BitFlight/agent-marketplace-versioner@<full-commit-sha>'
-agent-marketplace-versioner check --base-ref origin/main --head-ref HEAD
-agent-marketplace-versioner sync
-```
-
-Run the CLI from the consumer Git repository. `check` is read-only; `sync` mutates
-and stages manifests. See the [usage guide](docs/index.md) for audit, repair and
-marketplace reconciliation.
 
 <!-- end usage -->
 
 <!-- start inputs -->
 
-| Input | Default | Meaning |
-| --- | --- | --- |
-| `command` | `check` | `check`, `audit`, `sync`, `repair`, or `reconcile` |
-| `marketplace` | `false` | Set `true` with `command: sync` for post-merge catalog reconciliation (`sync --marketplace`) |
-| `repository` | workflow workspace | Consumer Git repository directory |
-| `base-ref` | PR base SHA or push before SHA | Required base for `check` |
-| `head-ref` | PR head SHA or workflow SHA | Candidate for `check` |
-
-`audit` reports drift without writing. `sync`, `repair`, and `reconcile` explicitly
-authorize mutation; the action does not commit or push their changes. The composite
-action supports Linux and macOS Bash runners and installs its checked-out package
-and locked runtime dependencies in an isolated temporary environment.
+| **Input** | **Description** | **Default** | **Required** |
+|---|---|---|---|
+| <b><code>command</code></b> | CLI command to run (check, audit, sync, repair, or reconcile). Only check and audit are read-only. | <code>check</code> | __false__ |
+| <b><code>marketplace</code></b> | Set to true with command sync to reconcile and version marketplace catalogs. | <code>false</code> | __false__ |
+| <b><code>repository</code></b> | Consumer Git repository directory. | <code>${{ github.workspace }}</code> | __false__ |
+| <b><code>base-ref</code></b> | Base revision for check. The checkout must contain this revision. | <code>${{ github.event.pull_request.base.sha \|\| github.event.before }}</code> | __false__ |
+| <b><code>head-ref</code></b> | Candidate revision for check. | <code>${{ github.event.pull_request.head.sha \|\| github.sha }}</code> | __false__ |
 
 <!-- end inputs -->
 
 <!-- start outputs -->
+
+
+
 <!-- end outputs -->
