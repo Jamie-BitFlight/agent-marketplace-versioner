@@ -456,13 +456,7 @@ class TestVersionComparisonGuard:
         loaded = json.loads(marketplace_json.read_text(encoding="utf-8"))
         assert loaded["metadata"]["version"] == "2.1.0"
 
-    def test_guard_returns_current_version_not_zero(self, tmp_path: Path, monkeypatch: Any) -> None:
-        """Verify the guard returns the actual current version, not "0.0.0".
-
-        Tests: Return value fidelity of the version guard
-        How: Set up plugin.json with version already bumped, inspect return
-        Why: Unlike the old staged guard, the new guard returns the real version
-        """
+    def test_manual_version_bump_reconciles_component_arrays(self, tmp_path: Path, monkeypatch: Any) -> None:
         # Arrange
         monkeypatch.chdir(tmp_path)
 
@@ -478,9 +472,11 @@ class TestVersionComparisonGuard:
         # Act
         updated, version = auto_sync.update_plugin_json(plugin_name, changes)
 
-        # Assert -- returns actual version "3.2.1", not "0.0.0"
-        assert updated is False
+        assert updated is True
         assert version == "3.2.1"
+        assert json.loads((tmp_path / "plugins" / plugin_name / ".claude-plugin" / "plugin.json").read_text())[
+            "skills"
+        ] == ["./skills/new-skill/SKILL.md"]
 
     def test_guard_allows_bump_when_version_equals_head(self, tmp_path: Path, monkeypatch: Any) -> None:
         """Verify update proceeds when file version == HEAD version.

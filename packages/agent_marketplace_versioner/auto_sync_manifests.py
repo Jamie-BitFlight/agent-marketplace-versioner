@@ -260,25 +260,25 @@ def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
         versions: list[str] = []
         changed = False
         for manifest in manifests_for_source(manifests, source_root):
-            unstaged_content = manifest.path.read_bytes() if _has_unstaged_change(manifest.path) else None
-            staged_data = _read_staged_json(manifest.path) if unstaged_content is not None else None
+            original_content = manifest.path.read_bytes()
+            unstaged_change = _has_unstaged_change(manifest.path)
+            staged_data = _read_staged_json(manifest.path)
+            if staged_data is None:
+                continue
+            _write_json_lf(manifest.path, _format_json(staged_data))
             manifest_updated, version = _update_plugin_manifest(
                 manifest.path, changes, sync_components=True, compare_to_head=True
             )
+            generated_data = json.loads(manifest.path.read_text(encoding="utf-8"))
             changed |= manifest_updated
             versions.append(version)
-            if manifest_updated:
-                if unstaged_content is None or staged_data is None:
-                    _git_stage_file(manifest.path.as_posix())
-                else:
-                    _update_component_arrays(staged_data, changes)
-                    staged_data["version"] = version
-                    _stage_json(manifest.path, staged_data)
-                    manifest.path.write_bytes(unstaged_content)
+            if manifest_updated and generated_data is not None:
+                _stage_json(manifest.path, generated_data)
+            if unstaged_change or not manifest_updated:
+                manifest.path.write_bytes(original_content)
         if changed and versions:
             updated[source_root] = versions[0]
-    for path in sync_native_marketplaces(root, bump=False, manifests=manifests):
-        _git_stage_file(path.as_posix())
+    sync_native_marketplaces(root, bump=False, manifests=manifests, preserve_unstaged=True)
     return updated
 
 
@@ -352,6 +352,80 @@ def _source_differs_between_refs(root: Path, source: Path, base_ref: str | None,
     )
 
 
+def _sync_native_marketplace(
+    root: Path,
+    marketplace: NativeManifest,
+    manifests: list[NativeManifest],
+    *,
+    bump: bool,
+    dry_run: bool,
+    base_ref: str | None,
+    head_ref: str,
+) -> bool:
+    marketplace_path = root / marketplace.path
+    if (
+        bump
+        and marketplace.version_key_path is not None
+        and _version_already_bumped(marketplace.path, list(marketplace.version_key_path))
+    ):
+        return False
+    try:
+        data: _MarketplaceJsonData = json.loads(marketplace_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    local_entries = _marketplace_local_entries(data, marketplace, root)
+    source_parents = {source.parent for source in local_entries}
+    local_plugins = {
+        manifest_root(manifest): manifest
+        for manifest in manifests
+        if manifest.kind == "plugin"
+        if manifest_root(manifest).parent in source_parents
+        or (not local_entries and manifest_root(manifest).is_relative_to(marketplace_root(marketplace)))
+    }
+    deleted = [source for source in local_entries if source not in local_plugins]
+    added = [source for source in local_plugins if source not in local_entries]
+    renamed = {
+        source: _native_plugin_name(local_plugins[source], root)
+        for source, entry in local_entries.items()
+        if source in local_plugins and entry["name"] != _native_plugin_name(local_plugins[source], root)
+    }
+    plugins = data.get("plugins", [])
+    data["plugins"] = [
+        entry
+        for entry in plugins
+        if not (
+            (source := _marketplace_entry_source(entry)) is not None
+            and _marketplace_local_source_path(source, marketplace, root) in deleted
+        )
+    ]
+    for source in sorted(added):
+        manifest = local_plugins[source]
+        relative_source = source.relative_to(marketplace_root(marketplace))
+        data["plugins"].append({
+            "name": _native_plugin_name(manifest, root),
+            "source": f"./{relative_source.as_posix()}",
+        })
+    for source, name in renamed.items():
+        local_entries[source]["name"] = name
+    changed = bool(deleted or added or renamed) or any(
+        _source_differs_between_refs(root, source, base_ref, head_ref) for source in local_plugins
+    )
+    if not changed and (
+        not bump or marketplace.version_key_path is None or not _marketplace_differs_from_head(marketplace.path)
+    ):
+        return False
+    if not bump or marketplace.version_key_path is None:
+        if changed and not dry_run:
+            _write_json_lf(marketplace_path, _format_json(data))
+        return changed
+    if dry_run:
+        return True
+    bump_type: Literal["major", "minor", "patch"] = "major" if deleted else "minor" if added else "patch"
+    _bump_native_marketplace_version(data, marketplace, bump_type)
+    _write_json_lf(marketplace_path, _format_json(data))
+    return True
+
+
 def sync_native_marketplaces(
     root: Path = Path(),
     *,
@@ -360,6 +434,7 @@ def sync_native_marketplaces(
     manifests: list[NativeManifest] | None = None,
     base_ref: str | None = None,
     head_ref: str = "HEAD",
+    preserve_unstaged: bool = False,
 ) -> list[Path]:
     """Reconcile every Git-visible native marketplace with local plugin manifests.
 
@@ -371,70 +446,27 @@ def sync_native_marketplaces(
     updated: list[Path] = []
     for marketplace in (manifest for manifest in manifests if manifest.kind == "marketplace"):
         marketplace_path = root / marketplace.path
-        if (
-            bump
-            and marketplace.version_key_path is not None
-            and _version_already_bumped(marketplace.path, list(marketplace.version_key_path))
-        ):
-            continue
-        try:
-            data: _MarketplaceJsonData = json.loads(marketplace_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        local_entries = _marketplace_local_entries(data, marketplace, root)
-        source_parents = {source.parent for source in local_entries}
-        local_plugins = {
-            manifest_root(manifest): manifest
-            for manifest in manifests
-            if manifest.kind == "plugin"
-            if manifest_root(manifest).parent in source_parents
-            or (not local_entries and manifest_root(manifest).is_relative_to(marketplace_root(marketplace)))
-        }
-        deleted = [source for source in local_entries if source not in local_plugins]
-        added = [source for source in local_plugins if source not in local_entries]
-        renamed = {
-            source: _native_plugin_name(local_plugins[source], root)
-            for source, entry in local_entries.items()
-            if source in local_plugins and entry["name"] != _native_plugin_name(local_plugins[source], root)
-        }
-        plugins = data.get("plugins", [])
-        data["plugins"] = [
-            entry
-            for entry in plugins
-            if not (
-                (source := _marketplace_entry_source(entry)) is not None
-                and _marketplace_local_source_path(source, marketplace, root) in deleted
-            )
-        ]
-        for source in sorted(added):
-            manifest = local_plugins[source]
-            relative_source = source.relative_to(marketplace_root(marketplace))
-            data["plugins"].append({
-                "name": _native_plugin_name(manifest, root),
-                "source": f"./{relative_source.as_posix()}",
-            })
-        for source, name in renamed.items():
-            local_entries[source]["name"] = name
-        changed = bool(deleted or added or renamed) or any(
-            _source_differs_between_refs(root, source, base_ref, head_ref) for source in local_plugins
+        original_content = (
+            marketplace_path.read_bytes() if preserve_unstaged and _has_unstaged_change(marketplace.path) else None
         )
-        if not changed and (
-            not bump or marketplace.version_key_path is None or not _marketplace_differs_from_head(marketplace.path)
-        ):
-            continue
-        if not bump or marketplace.version_key_path is None:
+        if original_content is not None:
+            staged_data = _read_staged_json(marketplace.path)
+            if staged_data is None:
+                continue
+            _write_json_lf(marketplace_path, _format_json(staged_data))
+        try:
+            changed = _sync_native_marketplace(
+                root, marketplace, manifests, bump=bump, dry_run=dry_run, base_ref=base_ref, head_ref=head_ref
+            )
             if changed:
-                if not dry_run:
-                    _write_json_lf(marketplace_path, _format_json(data))
                 updated.append(marketplace.path)
-            continue
-        if dry_run:
-            updated.append(marketplace.path)
-            continue
-        bump_type: Literal["major", "minor", "patch"] = "major" if deleted else "minor" if added else "patch"
-        _bump_native_marketplace_version(data, marketplace, bump_type)
-        _write_json_lf(marketplace_path, _format_json(data))
-        updated.append(marketplace.path)
+        finally:
+            if original_content is not None:
+                if updated and not dry_run and updated[-1] == marketplace.path:
+                    _stage_json(marketplace.path, json.loads(marketplace_path.read_text(encoding="utf-8")))
+                marketplace_path.write_bytes(original_content)
+            elif updated and not dry_run and updated[-1] == marketplace.path:
+                _git_stage_file(marketplace.path.as_posix())
     return updated
 
 
@@ -987,11 +1019,13 @@ def _update_from_base_ref(
     if base_ver is None:
         return None
 
+    modified = _update_component_arrays(data, changes) if sync_components else False
     ahead = _is_ahead_of_ref(plugin_json_path, ["version"], base_ref)
     if ahead:
+        if modified:
+            _write_json_lf(plugin_json_path, _format_json(data))
+            return True, current_version
         return False, current_version
-
-    modified = _update_component_arrays(data, changes) if sync_components else False
     if modified or any(changes.values()):
         return _write_plugin_version(plugin_json_path, data, base_ver, _determine_bump_type(changes), current_version)
     return False, current_version
@@ -1021,10 +1055,12 @@ def _update_from_head(
     Returns:
         ``(updated, version)``
     """
-    if _version_already_bumped(str(plugin_json_path), ["version"]):
-        return False, current_version
-
     modified = _update_component_arrays(data, changes) if sync_components else False
+    if _version_already_bumped(str(plugin_json_path), ["version"]):
+        if modified:
+            _write_json_lf(plugin_json_path, _format_json(data))
+            return True, current_version
+        return False, current_version
     if modified or any(changes.values()):
         return _write_plugin_version(
             plugin_json_path, data, current_version, _determine_bump_type(changes), current_version

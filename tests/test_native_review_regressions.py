@@ -272,3 +272,73 @@ def test_staged_sync_does_not_publish_untracked_plugin_manifest(
         subprocess.check_output(["git", "show", ":.claude-plugin/marketplace.json"], cwd=tmp_path)
     )
     assert staged_catalog["plugins"] == [{"name": "tool", "source": "./plugins/tool"}]
+
+
+def test_staged_sync_reconciles_components_without_replacing_a_manual_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    manifest = tmp_path / "tool/.claude-plugin/plugin.json"
+    write_json(manifest, {"name": "tool", "version": "1.0.0", "skills": ["./skills/existing"]})
+    existing = tmp_path / "tool/skills/existing/SKILL.md"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("existing\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    added = tmp_path / "tool/skills/added/SKILL.md"
+    added.parent.mkdir(parents=True)
+    added.write_text("added\n")
+    write_json(manifest, {"name": "tool", "version": "1.0.1", "skills": ["./skills/existing"]})
+    git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    sync_staged_manifests()
+
+    staged = json.loads(subprocess.check_output(["git", "show", ":tool/.claude-plugin/plugin.json"], cwd=tmp_path))
+    assert staged == {"name": "tool", "version": "1.0.1", "skills": ["./skills/existing", "./skills/added"]}
+
+
+def test_staged_sync_ignores_an_unstaged_manual_version_when_deciding_to_bump(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    manifest = tmp_path / "tool/.codex-plugin/plugin.json"
+    write_json(manifest, {"name": "tool", "version": "1.0.0"})
+    content = tmp_path / "tool/README.md"
+    content.write_text("before\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    content.write_text("after\n")
+    git(tmp_path, "add", "tool/README.md")
+    write_json(manifest, {"name": "tool", "version": "1.0.1"})
+    monkeypatch.chdir(tmp_path)
+
+    sync_staged_manifests()
+
+    staged = json.loads(subprocess.check_output(["git", "show", ":tool/.codex-plugin/plugin.json"], cwd=tmp_path))
+    assert staged["version"] == "1.0.1"
+
+
+def test_staged_sync_preserves_an_unstaged_marketplace_edit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    marketplace = tmp_path / ".claude-plugin/marketplace.json"
+    write_json(marketplace, {"description": "base", "plugins": [{"name": "tool", "source": "./plugins/tool"}]})
+    write_json(tmp_path / "plugins/tool/.claude-plugin/plugin.json", {"name": "tool", "version": "1.0.0"})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    write_json(tmp_path / "plugins/added/.claude-plugin/plugin.json", {"name": "added", "version": "1.0.0"})
+    git(tmp_path, "add", "plugins/added/.claude-plugin/plugin.json")
+    write_json(marketplace, {"description": "local", "plugins": [{"name": "tool", "source": "./plugins/tool"}]})
+    monkeypatch.chdir(tmp_path)
+
+    sync_staged_manifests()
+
+    staged = json.loads(subprocess.check_output(["git", "show", ":.claude-plugin/marketplace.json"], cwd=tmp_path))
+    assert staged == {
+        "description": "base",
+        "plugins": [{"name": "tool", "source": "./plugins/tool"}, {"name": "added", "source": "./plugins/added"}],
+    }
+    assert json.loads(marketplace.read_text()) == {
+        "description": "local",
+        "plugins": [{"name": "tool", "source": "./plugins/tool"}],
+    }
