@@ -1,0 +1,48 @@
+site_name: agent-marketplace-versioner
+site_description: Version management for agent marketplaces
+site_url: https://bitflight.io/agent-marketplace-versioner/
+repo_url: https://github.com/Jamie-BitFlight/agent-marketplace-versioner
+repo_name: Jamie-BitFlight/agent-marketplace-versioner
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Reference:
+      - API: reference/api.md
+      - CLI: reference/cli.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [packages]
+          options:
+            docstring_style: google
+            members_order: source
+            show_source: false
+  - mkdocs-typer2:
+      pretty: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences

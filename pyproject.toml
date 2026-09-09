@@ -1,0 +1,303 @@
+[project]
+name = "agent-marketplace-versioner"
+description = "Version management for agent marketplaces"
+readme = "README.md"
+dynamic = ["version"]
+authors = [{ name = "Jamie Nelson", email = "jamie@bitflight.io" }]
+maintainers = [{ name = "Jamie Nelson", email = "jamie@bitflight.io" }]
+license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Quality Assurance",
+]
+keywords = ["agent", "marketplace", "versioning"]
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "typer>=0.27.2",
+]
+
+[project.scripts]
+agent-marketplace-versioner = "agent_marketplace_versioner.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/Jamie-BitFlight/agent-marketplace-versioner"
+Issues = "https://github.com/Jamie-BitFlight/agent-marketplace-versioner/issues"
+Repository = "https://github.com/Jamie-BitFlight/agent-marketplace-versioner"
+
+[build-system]
+requires = ["hatch-vcs", "hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "beautifulsoup4>=4.15.0",
+    "hatch-vcs>=0.5.0",
+    "hatchling>=1.32.0",
+    "hypothesis>=6.168.0",
+    "mkdocs-material>=9.7.7",
+    "mkdocs-typer2[mkdocs]>=0.4.1",
+    "mkdocs>=1.6.1",
+    "mkdocstrings[python]>=1.0.6",
+    "prek>=0.5.2",
+    "pytest-cov>=7.1.0",
+    "pytest-mock>=3.15.1",
+    "pytest-xdist>=3.8.0",
+    "pytest>=9.1.1",
+    "rich>=15.0.0",
+    "ruff>=0.16.6",
+    "ty>=0.0.78",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "packages/agent_marketplace_versioner",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+[tool.hatch.build.targets.wheel]
+exclude = ["packages/agent_marketplace_versioner/tests"]
+include = ["packages/agent_marketplace_versioner"]
+
+[tool.hatch.build.targets.wheel.sources]
+"packages/agent_marketplace_versioner" = "agent_marketplace_versioner"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.git-cliff]
+config = "cliff.toml"
+
+[tool.pytest.ini_options]
+addopts = [
+    "--cov-report=term-missing",
+    "--cov=packages/agent_marketplace_versioner",
+    "-v",
+    "-n",
+    "auto",
+]
+markers = [
+    "slow: tests that build wheels or create venvs (skip with -m 'not slow')",
+]
+python_classes = ["Test*"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+pythonpath = [".", "packages/", "tests/"]
+testpaths = ["**/tests", ".agents/skills/*/scripts"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+fail_under = 60
+show_missing = true
+
+[tool.coverage.run]
+omit = ["**/tests/*"]
+
+[tool.ty.environment]
+extra-paths = [
+    ".",
+    "./packages",
+    "./packages/agent_marketplace_versioner",
+    "./scripts",
+]
+root = ["./"]
+
+[tool.ty.src]
+exclude = [
+    ".agents/skills/receiving-pr-reviews",
+    "packages/agent_marketplace_versioner/tests/fixtures/providers/*/failing-examples/*",
+]
+include = [".agents", ".github", "packages", "scripts", "tests"]
+
+[tool.ruff]
+exclude = [
+    "packages/agent_marketplace_versioner/tests/fixtures/providers/*/failing-examples/*",
+]
+line-length = 120
+src = [".github", "packages", "scripts", "tests"]
+target-version = "py311"
+unsafe-fixes = true
+
+[tool.ruff.format]
+docstring-code-format = true
+line-ending = "lf"
+preview = true
+quote-style = "double"
+skip-magic-trailing-comma = true
+
+[tool.ruff.lint]
+extend-select = [
+    "A",
+    "ANN",
+    "ASYNC",
+    "B",
+    "BLE",
+    "C4",
+    "C90",
+    "D",
+    "DOC",
+    "E",
+    "EXE",
+    "F",
+    "FA",
+    "FAST",
+    "FLY",
+    "FURB",
+    "G201",
+    "G202",
+    "I",
+    "N",
+    "PERF",
+    "PGH",
+    "PIE",
+    "PL",
+    "PT",
+    "PTH",
+    "PYI",
+    "Q",
+    "RET",
+    "RSE",
+    "RUF",
+    "S",
+    "SIM",
+    "SLF",
+    "SLOT",
+    "T10",
+    "T20",
+    "TC",
+    "TRY",
+    "UP",
+    "W",
+    "YTT",
+]
+ignore = [
+    "COM812",
+    "COM819",
+    "D107",
+    "D415",
+    "DOC501",
+    "DOC502",
+    "E111",
+    "E117",
+    "E203",
+    "E402",
+    "E501",
+    "EXE003",
+    "N815",
+    "PLR0913",
+    "PLR6301",
+    "Q000",
+    "Q001",
+    "Q002",
+    "Q003",
+    "RUF105",
+    "RUF201",
+    "S310",
+    "S404",
+    "S603",
+    "S606",
+    "T201",
+    "TC001",
+    "TC002",
+    "TC003",
+    "TRY003",
+]
+preview = true
+unfixable = ["F401"]
+
+[tool.ruff.lint.flake8-quotes]
+docstring-quotes = "double"
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+force-single-line = false
+force-wrap-aliases = false
+required-imports = ["from __future__ import annotations"]
+split-on-trailing-comma = false
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.ruff.lint.per-file-ignores]
+"**/scripts/**" = ["T201"]
+"**/tests/**" = [
+    "ANN",
+    "D",
+    "DOC",
+    "E501",
+    "EXE",
+    "N",
+    "PLC",
+    "PLR",
+    "S",
+    "SLF",
+    "T",
+]
+".agents/skills/*/scripts/test_*.py" = [
+    "ANN",
+    "D",
+    "DOC",
+    "E501",
+    "EXE",
+    "N",
+    "PLC",
+    "PLR",
+    "S",
+    "SLF",
+    "T",
+]
+"packages/agent_marketplace_versioner/tests/fixtures/providers/*/failing-examples/**" = [
+    "ALL",
+]
+
+[tool.ruff.lint.pycodestyle]
+max-line-length = 120
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+exclude = [".*"]
+
+[tool.basedpyright]
+typeCheckingMode = "off"
+
+[tool.semantic_release]
+allow_zero_version = true
+build_command = "uv build"
+major_on_zero = true
+tag_format = "v{version}"
+version_toml = []
+
+[tool.semantic_release.branches.main]
+match = "(main|master)"
+prerelease = false
+
+[tool.semantic_release.commit_parser_options]
+allowed_tags = [
+    "build",
+    "chore",
+    "ci",
+    "docs",
+    "feat",
+    "fix",
+    "perf",
+    "refactor",
+    "style",
+    "test",
+]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf", "refactor"]

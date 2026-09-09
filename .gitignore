@@ -195,11 +195,14 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#   and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#   and can be added to the global gitignore or merged into this file. However, if you prefer,
 #   you could uncomment the following to ignore the entire vscode folder
 # .vscode/
+# Editor project state
+.idea/
+.vscode/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
@@ -216,3 +219,58 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# skilllint-aligned project state
+.worktrees
+.omo/
+.hermes/
+.tmp/
+.coverage*
+
+.claude/vendor/*
+!.claude/vendor/CLAUDE.md
+.claude/worktrees
+.claude/reports/*
+.claude/smells/
+.claude/gsd-install-state.json
+.claude/gsd-local-patches/
+.claude/gsd-migration-journal/
+.claude/gsd-pristine/
+.gsd/activity/
+.gsd/runtime/
+.gsd/worktrees/
+.gsd/auto.lock
+.gsd/metrics.json
+.gsd/STATE.md
+.gsd/completed-units.json
+.gsd/gsd.db
+.gsd/DISCUSSION-MANIFEST.json
+.gsd/milestones/**/*-CONTINUE.md
+.gsd/milestones/**/continue.md
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.code-workspace
+.env.*
+!.env.example
+node_modules/
+.next/
+vendor/
+coverage/
+tmp/
+
+# Benchmark artifacts
+scripts/bench-plugin/
+scripts/results/
+
+.cocoindex_code/
+.bg-shell/
+.claude-audit/
+.continue-here.md
+docs/plans/
+docs/superpowers/
+walkthrough/
+.planning/
+plan

@@ -1,0 +1,23 @@
+name: Update README
+
+on:
+  push:
+    branches: [main]
+    paths: [action.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: bitflight-devops/github-action-readme-generator@v1.12.8
+      - uses: stefanzweifel/git-auto-commit-action@v6
+        with:
+          commit_message: "docs: regenerate README"
+          file_pattern: README.md .github/ghadocs/

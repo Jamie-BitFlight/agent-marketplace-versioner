@@ -1,0 +1,18 @@
+{
+  "owner": "Jamie-BitFlight",
+  "repo": "agent-marketplace-versioner",
+  "title_prefix": "GitHub Action: ",
+  "paths": {
+    "action": "action.yml",
+    "readme": "README.md"
+  },
+  "branding_svg_path": ".github/ghadocs/branding.svg",
+  "versioning": {
+    "enabled": true,
+    "source": "git-tag",
+    "prefix": "v",
+    "override": "",
+    "branch": "main"
+  },
+  "prettier": false
+}

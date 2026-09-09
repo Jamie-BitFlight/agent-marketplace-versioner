@@ -1,0 +1,108 @@
+default_stages:
+  - commit-msg
+  - pre-commit
+
+repos:
+  - repo: https://github.com/mxr/sync-pre-commit-deps
+    rev: v0.0.5
+    hooks:
+      - id: sync-pre-commit-deps
+
+  - repo: local
+    hooks:
+      - id: conventional-pre-commit
+        name: Conventional Commit
+        stages: [commit-msg]
+        language: system
+        always_run: true
+        entry: uv run --with conventional-pre-commit conventional-pre-commit --strict --force-scope
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: destroyed-symlinks
+      - id: trailing-whitespace
+        exclude: (\.(lock|json|toml|ya?ml)$|.gsd/)
+      - id: check-yaml
+        args: [--unsafe]
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=10000"]
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
+  - repo: https://github.com/bitflight-devops/pyproject-fmt
+    rev: v1.1.12
+    hooks:
+      - id: pypfmt
+        files: ^pyproject\.toml$
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/oxc-project/mirrors-oxlint
+    rev: "v1.80.0"
+    hooks:
+      - id: oxlint
+        args: [--fix]
+        exclude: ^(\.?plan(ning)?/|\.claude/backlog/|\.claude/get-shit-done|\.claude/hooks/gsd-.*)
+
+  - repo: https://github.com/oxc-project/mirrors-oxfmt
+    rev: "v0.65.0"
+    hooks:
+      - id: oxfmt
+        exclude: ^(\.?plan(ning)?/|\.claude/backlog/|\.claude/get-shit-done|\.claude/hooks/gsd-.*)
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.23.2
+    hooks:
+      - id: markdownlint-cli2
+        exclude: ^(plan/|\.claude/|.planning/)
+
+  - repo: https://github.com/pecigonzalo/pre-commit-shfmt
+    rev: v2.2.0
+    hooks:
+      - id: shell-fmt-go
+        args: ["--apply-ignore", -w, -i, "4", -ci]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1-1
+    hooks:
+      - id: shellcheck
+
+  - repo: local
+    hooks:
+      - id: ty
+        name: ty check
+        entry: uv run -q ty check
+        language: system
+        types: [python]
+        pass_filenames: true
+
+      - id: enable-rerere
+        name: Enable git rerere
+        entry: bash -c 'git config rerere.enabled true && git config rerere.autoupdate true'
+        language: system
+        stages: [pre-rebase, post-merge]
+        always_run: true
+        pass_filenames: false
+
+default_language_version:
+  python: python3
+  node: 24.16.0
+
+exclude: ^(\.?plan(ning)?/|\.claude/backlog/|\.claude/get-shit-done|\.claude/hooks/gsd-.*|\.gsd/|\.agents/skills/(pre-push-semantic-review|rebase|receiving-pr-reviews)/|packages/agent_marketplace_versioner/tests/fixtures/providers/.*/failing-examples/)
