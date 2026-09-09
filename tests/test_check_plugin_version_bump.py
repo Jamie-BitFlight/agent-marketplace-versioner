@@ -116,18 +116,15 @@ class TestCheckVersionBumps:
              development-harness content but plugin.json stayed at 9.0.15.
         """
         # Arrange
-        monkeypatch.setattr(gate, "plugins_with_diff", lambda _base, _head: {"dh"})
-
-        def _fake_read_ref_json(_ref: str, _path: str) -> dict[str, str]:
-            return {"version": "9.0.15"}
-
-        monkeypatch.setattr(gate, "read_ref_json", _fake_read_ref_json)
+        monkeypatch.setattr(
+            gate, "check_native_version_bumps", lambda _base, _head: [Path("arbitrary/.codex-plugin/plugin.json")]
+        )
 
         # Act
         result = gate.check_version_bumps("main", "HEAD")
 
         # Assert
-        assert result == ["dh"]
+        assert result == ["arbitrary/.codex-plugin/plugin.json"]
 
     def test_passes_when_version_strictly_increased(self, monkeypatch: Any) -> None:
         """A changed plugin whose version increased at head is not flagged.
@@ -137,12 +134,7 @@ class TestCheckVersionBumps:
         Why: This is the correct, bumped state -- the gate must not false-positive.
         """
         # Arrange
-        monkeypatch.setattr(gate, "plugins_with_diff", lambda _base, _head: {"dh"})
-
-        def _fake_read_ref_json(ref: str, _path: str) -> dict[str, str]:
-            return {"version": "9.0.16" if ref == "HEAD" else "9.0.15"}
-
-        monkeypatch.setattr(gate, "read_ref_json", _fake_read_ref_json)
+        monkeypatch.setattr(gate, "check_native_version_bumps", lambda _base, _head: [])
 
         # Act
         result = gate.check_version_bumps("main", "HEAD")
@@ -159,12 +151,7 @@ class TestCheckVersionBumps:
              false positive that blocks legitimate new-plugin PRs.
         """
         # Arrange
-        monkeypatch.setattr(gate, "plugins_with_diff", lambda _base, _head: {"brand-new"})
-
-        def _fake_read_ref_json(ref: str, _path: str) -> dict[str, str] | None:
-            return None if ref == "main" else {"version": "0.1.0"}
-
-        monkeypatch.setattr(gate, "read_ref_json", _fake_read_ref_json)
+        monkeypatch.setattr(gate, "check_native_version_bumps", lambda _base, _head: [])
 
         # Act
         result = gate.check_version_bumps("main", "HEAD")
@@ -180,12 +167,7 @@ class TestCheckVersionBumps:
         Why: A deleted plugin has nothing left to bump.
         """
         # Arrange
-        monkeypatch.setattr(gate, "plugins_with_diff", lambda _base, _head: {"removed"})
-
-        def _fake_read_ref_json(ref: str, _path: str) -> dict[str, str] | None:
-            return None if ref == "HEAD" else {"version": "1.0.0"}
-
-        monkeypatch.setattr(gate, "read_ref_json", _fake_read_ref_json)
+        monkeypatch.setattr(gate, "check_native_version_bumps", lambda _base, _head: [])
 
         # Act
         result = gate.check_version_bumps("main", "HEAD")
@@ -202,14 +184,17 @@ class TestCheckVersionBumps:
              the first one found.
         """
         # Arrange
-        monkeypatch.setattr(gate, "plugins_with_diff", lambda _base, _head: {"zzz", "aaa"})
-        monkeypatch.setattr(gate, "read_ref_json", lambda _ref, _path: {"version": "1.0.0"})
+        monkeypatch.setattr(
+            gate,
+            "check_native_version_bumps",
+            lambda _base, _head: [Path("a/.codex-plugin/plugin.json"), Path("z/.codex-plugin/plugin.json")],
+        )
 
         # Act
         result = gate.check_version_bumps("main", "HEAD")
 
         # Assert
-        assert result == ["aaa", "zzz"]
+        assert result == ["a/.codex-plugin/plugin.json", "z/.codex-plugin/plugin.json"]
 
 
 # ============================================================================
@@ -440,16 +425,14 @@ class TestRunAudit:
              result is compact JSON rather than prose (Greptile P2 finding).
         """
         # Arrange
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "plugins").mkdir()
-        monkeypatch.setattr(gate, "audit_version_drift", lambda _root: [])
+        monkeypatch.setattr(gate, "_native_drifted_manifests", list)
 
         # Act
         exit_code = gate._run_audit()
 
         # Assert
         assert exit_code == 0
-        assert json.loads(capsys.readouterr().out) == {"drifted_plugins": []}
+        assert json.loads(capsys.readouterr().out) == {"drifted_manifests": []}
 
     def test_reports_drifted_plugins(self, tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
         """Drifted plugins are reported as a JSON list; still exits 0 (report-only).
@@ -461,16 +444,14 @@ class TestRunAudit:
              that follow-up tooling must be able to parse the result directly.
         """
         # Arrange
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "plugins").mkdir()
-        monkeypatch.setattr(gate, "audit_version_drift", lambda _root: ["dh"])
+        monkeypatch.setattr(gate, "_native_drifted_manifests", lambda: [Path("arbitrary/.codex-plugin/plugin.json")])
 
         # Act
         exit_code = gate._run_audit()
 
         # Assert
         assert exit_code == 0
-        assert json.loads(capsys.readouterr().out) == {"drifted_plugins": ["dh"]}
+        assert json.loads(capsys.readouterr().out) == {"drifted_manifests": ["arbitrary/.codex-plugin/plugin.json"]}
 
 
 class TestRunRepair:
@@ -486,9 +467,7 @@ class TestRunRepair:
              tree must never be mistaken for an error.
         """
         # Arrange
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "plugins").mkdir()
-        monkeypatch.setattr(gate, "audit_version_drift", lambda _root: [])
+        monkeypatch.setattr(gate, "_native_drifted_manifests", list)
 
         # Act
         exit_code = gate._run_repair()
@@ -507,10 +486,10 @@ class TestRunRepair:
              JSON naming each plugin and its version delta (T1 spec).
         """
         # Arrange
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "plugins").mkdir()
-        monkeypatch.setattr(gate, "audit_version_drift", lambda _root: ["dh"])
-        monkeypatch.setattr(gate, "repair_plugin_version", lambda _plugin_dir: ("9.0.17", "9.0.18"))
+        manifest = tmp_path / "arbitrary" / ".codex-plugin" / "plugin.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({"version": "9.0.17"}), encoding="utf-8")
+        monkeypatch.setattr(gate, "_native_drifted_manifests", lambda: [manifest])
 
         # Act
         exit_code = gate._run_repair()
@@ -518,7 +497,7 @@ class TestRunRepair:
         # Assert
         assert exit_code == 0
         assert json.loads(capsys.readouterr().out) == {
-            "repaired": [{"plugin": "dh", "old_version": "9.0.17", "new_version": "9.0.18"}],
+            "repaired": [{"manifest": str(manifest), "old_version": "9.0.17", "new_version": "9.0.18"}],
             "failed": [],
         }
 
@@ -537,17 +516,17 @@ class TestRunRepair:
              must report what changed (or, here, what could not be changed).
         """
         # Arrange
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "plugins").mkdir()
-        monkeypatch.setattr(gate, "audit_version_drift", lambda _root: ["broken"])
-        monkeypatch.setattr(gate, "repair_plugin_version", lambda _plugin_dir: None)
+        manifest = tmp_path / "broken" / ".codex-plugin" / "plugin.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text("{", encoding="utf-8")
+        monkeypatch.setattr(gate, "_native_drifted_manifests", lambda: [manifest])
 
         # Act
         exit_code = gate._run_repair()
 
         # Assert
         assert exit_code == 1
-        assert json.loads(capsys.readouterr().out) == {"repaired": [], "failed": ["broken"]}
+        assert json.loads(capsys.readouterr().out) == {"repaired": [], "failed": [str(manifest)]}
 
 
 class TestRepairPluginVersion:
@@ -721,7 +700,7 @@ class TestCheckVersionBumpsIntegration:
         missing = gate.check_version_bumps(base_sha, "HEAD")
 
         # Assert -- the exact gap that let PR #3005 land silently
-        assert missing == ["dh"]
+        assert missing == ["plugins/dh/.claude-plugin/plugin.json"]
 
     def test_passes_once_the_bump_is_included(self, tmp_path: Path, monkeypatch: Any) -> None:
         """Falsification check: the same diff, but with plugin.json also bumped, passes clean.
@@ -847,7 +826,7 @@ class TestCheckVersionBumpsIntegration:
         fixed_missing = gate.check_version_bumps(divergence_sha, pr_head_sha)
 
         # Assert -- reproduction: plugin-a is wrongly flagged via the merge commit ...
-        assert buggy_missing == ["plugin-a"]
+        assert buggy_missing == ["plugins/plugin-a/.claude-plugin/plugin.json"]
         # ... but never flagged when diffed against the PR's actual head.
         assert fixed_missing == []
 
@@ -910,7 +889,7 @@ class TestCheckVersionBumpsIntegration:
         # Assert -- reproduction: the merge commit's inherited base bump hides the gap ...
         assert buggy_missing == []
         # ... but diffing against the PR's real head catches the missing bump.
-        assert fixed_missing == ["plugin-a"]
+        assert fixed_missing == ["plugins/plugin-a/.claude-plugin/plugin.json"]
 
 
 @pytest.mark.integration

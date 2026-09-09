@@ -244,6 +244,8 @@ def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
             manifest_updated, version = _update_plugin_manifest(manifest.path, changes, sync_components=True)
             changed |= manifest_updated
             versions.append(version)
+            if manifest_updated:
+                _git_stage_file(manifest.path.as_posix())
         if changed and versions:
             updated[source_root] = versions[0]
     return updated
@@ -271,7 +273,7 @@ def _marketplace_local_entries(
     return entries
 
 
-def sync_native_marketplaces(root: Path = Path()) -> list[Path]:
+def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True) -> list[Path]:
     """Reconcile every Git-visible native marketplace with local plugin manifests.
 
     Returns:
@@ -281,7 +283,7 @@ def sync_native_marketplaces(root: Path = Path()) -> list[Path]:
     updated: list[Path] = []
     for marketplace in (manifest for manifest in manifests if manifest.kind == "marketplace"):
         marketplace_path = root / marketplace.path
-        if _version_already_bumped(marketplace.path, list(marketplace.version_key_path)):
+        if bump and _version_already_bumped(marketplace.path, list(marketplace.version_key_path)):
             continue
         try:
             data: _MarketplaceJsonData = json.loads(marketplace_path.read_text(encoding="utf-8"))
@@ -315,6 +317,12 @@ def sync_native_marketplaces(root: Path = Path()) -> list[Path]:
                 "name": _native_plugin_name(manifest, root),
                 "source": f"./{relative_source.as_posix()}",
             })
+        if not bump and not (deleted or added):
+            continue
+        if not bump:
+            _write_json_lf(marketplace_path, _format_json(data))
+            updated.append(marketplace.path)
+            continue
         bump_type: Literal["major", "minor", "patch"] = "major" if deleted else "minor" if added else "patch"
         if marketplace.version_key_path == ("version",):
             current_version = data.get("version", "0.0.0")
@@ -1842,111 +1850,16 @@ def _report_plugin_update(plugin_name: str, new_version: str, changes: Component
 
 
 def _precommit_sync() -> int:
-    """Run the pre-commit sync mode (original behavior).
-
-    Detects staged git changes and updates plugin.json / marketplace.json.
-
-    Returns:
-        Exit code (0 for success)
-    """
-    status = get_git_status()
-    plugin_component_changes, marketplace_changes = _process_file_changes(status)
-
-    plugins_updated = False
-    marketplace_updated = False
-
-    for plugin_name, changes in plugin_component_changes.items():
-        updated, new_version = update_plugin_json(plugin_name, changes)
-
-        if updated:
-            plugins_updated = True
-            for manifest_path, _sync_components in _plugin_manifest_paths(plugin_name):
-                _git_stage_file(str(manifest_path))
-            marketplace_changes["modified"].append((plugin_name, new_version))
-            _report_plugin_update(plugin_name, new_version, changes)
-
-    # Structural sync only — version bump happens in CI post-merge
-    # (avoids marketplace.json conflicts across concurrent PRs)
-    if marketplace_changes["added"] or marketplace_changes["deleted"]:
-        marketplace_path = Path(".claude-plugin/marketplace.json")
-        if marketplace_path.exists():
-            with marketplace_path.open(encoding="utf-8") as f:
-                mdata: _MarketplaceJsonData = json.load(f)
-            if _update_marketplace_plugins(mdata, marketplace_changes):
-                _write_json_lf(marketplace_path, _format_json(mdata))
-                _git_stage_file(".claude-plugin/marketplace.json")
-                marketplace_updated = True
-                if marketplace_changes["added"]:
-                    print(f"Added plugins to marketplace: {', '.join(sorted(marketplace_changes['added']))}")
-                if marketplace_changes["deleted"]:
-                    print(f"Removed plugins from marketplace: {', '.join(sorted(marketplace_changes['deleted']))}")
-                print("Note: marketplace version bump deferred to CI post-merge")
-
-    if not plugins_updated and not marketplace_updated:
+    updated = sync_staged_manifests()
+    for marketplace_path in sync_native_marketplaces(bump=False):
+        _git_stage_file(marketplace_path.as_posix())
+    if not updated:
         print("Info: No manifest updates needed")
-
     return 0
 
 
 def _sync_marketplace_mode() -> int:
-    """Post-merge marketplace sync mode.
-
-    Called by CI after push to main. Reconciles the plugin list structure,
-    then bumps the marketplace version to reflect changes that landed in
-    the merge commit.
-
-    Returns:
-        Exit code (0 for success, 1 on error)
-    """
-    marketplace_path = Path(".claude-plugin/marketplace.json")
-    plugins_root = Path("plugins")
-
-    if not marketplace_path.exists():
-        sys.stderr.write("Error: marketplace.json not found\n")
-        return 1
-
-    if not plugins_root.is_dir():
-        sys.stderr.write("Error: plugins/ directory not found\n")
-        return 1
-
-    # Read version before reconcile
-    with marketplace_path.open(encoding="utf-8") as f:
-        pre_data: _MarketplaceJsonData = json.load(f)
-    pre_meta: _MarketplaceMetadata = pre_data.get("metadata", {})
-    version_before = pre_meta.get("version", "0.0.0")
-
-    # Reconcile plugin list structure (handles add/remove + their version bumps)
-    _reconcile_marketplace(plugins_root, dry_run=False)
-
-    # Re-read after reconcile
-    with marketplace_path.open(encoding="utf-8") as f:
-        post_data: _MarketplaceJsonData = json.load(f)
-    post_meta: _MarketplaceMetadata = post_data.get("metadata", {})
-    version_after = post_meta.get("version", "0.0.0")
-
-    # If reconcile didn't bump (no plugin added/removed), do a patch bump
-    # to reflect that plugin content changed (this mode only runs when it did)
-    if _parse_version_tuple(version_after) == _parse_version_tuple(version_before):
-        new_version = bump_version(version_after, "patch")
-        post_meta["version"] = new_version
-        post_data["metadata"] = post_meta
-        _write_json_lf(marketplace_path, _format_json(post_data))
-        print(f"Updated marketplace -> {new_version}")
-    else:
-        print(f"Updated marketplace -> {version_after} (structural changes)")
-
-    _git_stage_file(".claude-plugin/marketplace.json")
-    return 0
-
-
-def _native_precommit_sync() -> int:
-    updated = sync_staged_manifests()
-    manifests = discover_manifests()
-    for source_root in updated:
-        for manifest in manifests_for_source(manifests, source_root):
-            _git_stage_file(manifest.path.as_posix())
-    if not updated:
-        print("Info: No manifest updates needed")
+    sync_native_marketplaces()
     return 0
 
 
@@ -1971,14 +1884,14 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.sync_marketplace:
-        return 0 if sync_native_marketplaces() else 1
+        return _sync_marketplace_mode()
 
     if args.reconcile:
         if not args.dry_run:
             sync_native_marketplaces()
         return 0
 
-    return _native_precommit_sync()
+    return _precommit_sync()
 
 
 if __name__ == "__main__":

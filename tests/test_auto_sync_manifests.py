@@ -83,6 +83,10 @@ def _make_marketplace_json(base: Path, data: Mapping[str, Any]) -> Path:
     return marketplace_json
 
 
+def _initialize_git_worktree(path: Path) -> None:
+    subprocess.run(["git", "init", "--quiet"], cwd=path, check=True)
+
+
 def _changes_with_modified_skill() -> _ComponentChangesDict:
     """Return component changes with a single modified skill."""
     return {
@@ -1724,10 +1728,12 @@ class TestPrecommitSyncMarketplaceStructural:
              only the CI post-merge mode does that.
         """
         # Arrange
+        _initialize_git_worktree(tmp_path)
         monkeypatch.chdir(tmp_path)
 
         # Create the new plugin's plugin.json on disk
         _make_plugin_json(tmp_path, "new-plugin", {"name": "new-plugin", "version": "0.1.0"})
+        _make_plugin_json(tmp_path, "existing", {"name": "existing", "version": "0.1.0"})
         _make_marketplace_json(
             tmp_path,
             {"metadata": {"version": "2.3.0"}, "plugins": [{"name": "existing", "source": "./plugins/existing"}]},
@@ -1764,6 +1770,7 @@ class TestPrecommitSyncMarketplaceStructural:
         Why: Confirm marketplace.json is not touched at all for non-structural changes.
         """
         # Arrange
+        _initialize_git_worktree(tmp_path)
         monkeypatch.chdir(tmp_path)
 
         _make_plugin_json(tmp_path, "alpha", {"name": "alpha", "version": "1.0.0"})
@@ -1826,6 +1833,7 @@ class TestSyncMarketplaceMode:
              no plugins were added or removed.
         """
         # Arrange
+        _initialize_git_worktree(tmp_path)
         monkeypatch.chdir(tmp_path)
         _make_plugin_on_disk(tmp_path, "alpha")
         _make_marketplace_json(
@@ -1857,6 +1865,7 @@ class TestSyncMarketplaceMode:
              and bump version accordingly.
         """
         # Arrange
+        _initialize_git_worktree(tmp_path)
         monkeypatch.chdir(tmp_path)
         _make_plugin_on_disk(tmp_path, "alpha")
         _make_plugin_on_disk(tmp_path, "beta")
@@ -1883,15 +1892,9 @@ class TestSyncMarketplaceMode:
         assert "beta" in names
         assert "alpha" in names
 
-    def test_sync_marketplace_mode_returns_1_when_marketplace_missing(self, tmp_path: Path, monkeypatch: Any) -> None:
-        """Verify exit code 1 when marketplace.json does not exist.
-
-        Tests: _sync_marketplace_mode error path — missing marketplace.json
-        How: Create a plugins/ dir but no .claude-plugin/marketplace.json
-        Why: The function must fail fast with a clear error rather than creating
-             or silently skipping marketplace.json.
-        """
+    def test_sync_marketplace_mode_succeeds_when_marketplace_missing(self, tmp_path: Path, monkeypatch: Any) -> None:
         # Arrange
+        _initialize_git_worktree(tmp_path)
         monkeypatch.chdir(tmp_path)
         (tmp_path / "plugins").mkdir()
 
@@ -1899,7 +1902,7 @@ class TestSyncMarketplaceMode:
         exit_code = auto_sync._sync_marketplace_mode()
 
         # Assert
-        assert exit_code == 1
+        assert exit_code == 0
 
 
 # ============================================================================

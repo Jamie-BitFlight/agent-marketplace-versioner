@@ -150,16 +150,7 @@ def check_version_bumps(base_ref: str, head_ref: str = "HEAD") -> list[str]:
         *base_ref*. Plugins created or deleted within the diff are excluded --
         there is no prior version to compare against.
     """
-    missing: list[str] = []
-    for plugin_name in sorted(plugins_with_diff(base_ref, head_ref)):
-        plugin_json_path = f"plugins/{plugin_name}/.claude-plugin/plugin.json"
-        base_version = extract_version_from_json(read_ref_json(base_ref, plugin_json_path), ["version"])
-        head_version = extract_version_from_json(read_ref_json(head_ref, plugin_json_path), ["version"])
-        if base_version is None or head_version is None:
-            continue  # plugin created or deleted in this diff -- no bump required
-        if head_version <= base_version:
-            missing.append(plugin_name)
-    return missing
+    return [path.as_posix() for path in check_native_version_bumps(base_ref, head_ref)]
 
 
 def find_last_version_bump_commit(plugin_json_relpath: str) -> str | None:
@@ -285,21 +276,22 @@ def _run_repair() -> int:
         well-formed string ``version``) -- that plugin remains drifted and
         must not be reported as a successful repair.
     """
-    plugins_root = Path("plugins")
-    if not plugins_root.is_dir():
-        sys.stderr.write("Error: plugins/ directory not found\n")
-        return 1
-
-    drifted = audit_version_drift(plugins_root)
-    repaired = []
-    failed = []
-    for plugin_name in drifted:
-        result = repair_plugin_version(plugins_root / plugin_name)
-        if result is None:
-            failed.append(plugin_name)
+    repaired: list[dict[str, str]] = []
+    failed: list[str] = []
+    for path in _native_drifted_manifests():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            failed.append(path.as_posix())
             continue
-        old_version, new_version = result
-        repaired.append({"plugin": plugin_name, "old_version": old_version, "new_version": new_version})
+        if not isinstance(data, dict) or extract_version_from_json(data, ["version"]) is None:
+            failed.append(path.as_posix())
+            continue
+        old_version = data["version"]
+        new_version = bump_version(old_version, "patch")
+        data["version"] = new_version
+        path.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        repaired.append({"manifest": path.as_posix(), "old_version": old_version, "new_version": new_version})
 
     print(json.dumps({"repaired": repaired, "failed": failed}))
     return 1 if failed else 0
@@ -331,38 +323,18 @@ def _run_check(base_ref_arg: str | None, head_ref_arg: str | None = None) -> int
         sys.stderr.write("Error: no base ref resolvable (origin/main or main) -- pass --base-ref explicitly\n")
         return 1
 
-    missing = check_version_bumps(base_ref, head_ref_arg or "HEAD")
-    if not missing:
-        print(f"OK: all changed plugins bumped plugin.json's version relative to {base_ref}")
-        return 0
-
-    sys.stderr.write("The following plugins changed but did not bump plugin.json's version:\n")
-    for name in missing:
-        sys.stderr.write(f"  - {name}\n")
-    sys.stderr.write(
-        "\nBump the version in plugins/<name>/.claude-plugin/plugin.json -- stage the plugin "
-        "change and run `uv run --no-sync plugins/plugin-creator/scripts/auto_sync_manifests.py` "
-        "locally (the pre-commit hook does this automatically), then push again.\n"
-    )
-    return 1
-
-
-def _run_native_check(base_ref_arg: str | None, head_ref_arg: str | None = None) -> int:
-    base_ref = base_ref_arg or resolve_base()
-    if base_ref is None:
-        sys.stderr.write("Error: no base ref resolvable (origin/main or main) -- pass --base-ref explicitly\n")
-        return 1
     try:
-        missing = check_native_version_bumps(base_ref, head_ref_arg or "HEAD")
+        missing = check_version_bumps(base_ref, head_ref_arg or "HEAD")
     except ValueError as error:
         sys.stderr.write(f"Error: {error}\n")
         return 1
     if not missing:
         print(f"OK: all changed native manifests bumped their version relative to {base_ref}")
         return 0
+
     sys.stderr.write("The following changed native manifests did not bump their version:\n")
     for path in missing:
-        sys.stderr.write(f"  - {path.as_posix()}\n")
+        sys.stderr.write(f"  - {path}\n")
     return 1
 
 
@@ -380,32 +352,6 @@ def _native_drifted_manifests() -> list[Path]:
     return drifted
 
 
-def _run_native_audit() -> int:
-    print(json.dumps({"drifted_manifests": [path.as_posix() for path in _native_drifted_manifests()]}))
-    return 0
-
-
-def _run_native_repair() -> int:
-    repaired: list[dict[str, str]] = []
-    failed: list[str] = []
-    for path in _native_drifted_manifests():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            failed.append(path.as_posix())
-            continue
-        if not isinstance(data, dict) or extract_version_from_json(data, ["version"]) is None:
-            failed.append(path.as_posix())
-            continue
-        old_version = data["version"]
-        new_version = bump_version(old_version, "patch")
-        data["version"] = new_version
-        path.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
-        repaired.append({"manifest": path.as_posix(), "old_version": old_version, "new_version": new_version})
-    print(json.dumps({"repaired": repaired, "failed": failed}))
-    return 1 if failed else 0
-
-
 def _run_audit() -> int:
     """Run the retroactive drift audit and print results as compact JSON.
 
@@ -419,13 +365,7 @@ def _run_audit() -> int:
         criterion #2 scopes retroactive repair as report-only so it never
         blocks unrelated PRs); non-zero is reserved for genuine tool errors.
     """
-    plugins_root = Path("plugins")
-    if not plugins_root.is_dir():
-        sys.stderr.write("Error: plugins/ directory not found\n")
-        return 1
-
-    drifted = audit_version_drift(plugins_root)
-    print(json.dumps({"drifted_plugins": drifted}))
+    print(json.dumps({"drifted_manifests": [path.as_posix() for path in _native_drifted_manifests()]}))
     return 0
 
 
@@ -457,10 +397,10 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.check:
-        return _run_native_check(args.base_ref, args.head_ref)
+        return _run_check(args.base_ref, args.head_ref)
     if args.repair:
-        return _run_native_repair()
-    return _run_native_audit()
+        return _run_repair()
+    return _run_audit()
 
 
 if __name__ == "__main__":
