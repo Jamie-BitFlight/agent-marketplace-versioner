@@ -58,7 +58,7 @@ def _git_visible_paths(root: Path) -> list[Path]:
         message = result.stderr.decode("utf-8", errors="replace").strip() or "not a Git repository"
         raise NativeManifestError(message)
     paths = [Path(item.decode("utf-8")) for item in result.stdout.split(b"\0") if item]
-    return [path for path in paths if not _is_gitignored(root, path)]
+    return [path for path in paths if is_git_visible(root, path)]
 
 
 def _is_gitignored(root: Path, path: Path) -> bool:
@@ -70,6 +70,11 @@ def _is_gitignored(root: Path, path: Path) -> bool:
         capture_output=True,
     )
     return result.returncode == 0
+
+
+def is_git_visible(root: Path, path: Path) -> bool:
+    """Return whether a path is not ignored under a repository root."""
+    return not _is_gitignored(root, path)
 
 
 def marketplace_root(manifest: NativeManifest) -> Path:

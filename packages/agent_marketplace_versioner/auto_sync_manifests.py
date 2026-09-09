@@ -52,6 +52,7 @@ from typing import Literal, TypedDict, TypeGuard
 from agent_marketplace_versioner.native_manifests import (
     NativeManifest,
     discover_manifests,
+    is_git_visible,
     manifest_root,
     manifests_for_source,
     marketplace_root,
@@ -1263,7 +1264,7 @@ def _discover_skills(plugin_dir: Path) -> list[str]:
 
         if item.is_dir():
             skill_md = item / "SKILL.md"
-            if skill_md.is_file():
+            if skill_md.is_file() and is_git_visible(Path(), skill_md):
                 # Skill directory with SKILL.md — skills are always flat: skills/{name}/
                 found.append(f"./skills/{item.name}")
 
@@ -1290,7 +1291,7 @@ def _discover_agents(plugin_dir: Path) -> list[str]:
     return [
         f"./agents/{f.name}"
         for f in sorted(agents_dir.iterdir())
-        if f.is_file() and f.suffix == ".md" and not f.name.startswith(".")
+        if f.is_file() and f.suffix == ".md" and not f.name.startswith(".") and is_git_visible(Path(), f)
     ]
 
 
@@ -1310,7 +1311,7 @@ def _discover_commands(plugin_dir: Path) -> list[str]:
     return [
         f"./commands/{f.name}"
         for f in sorted(commands_dir.iterdir())
-        if f.is_file() and f.suffix == ".md" and not f.name.startswith(".")
+        if f.is_file() and f.suffix == ".md" and not f.name.startswith(".") and is_git_visible(Path(), f)
     ]
 
 
@@ -1380,7 +1381,7 @@ def _discover_invocable_skills(plugin_dir: Path) -> list[str]:
     found: list[str] = []
 
     for item in sorted(skills_dir.iterdir()):
-        if item.name.startswith(".") or not item.is_dir():
+        if item.name.startswith(".") or not item.is_dir() or not is_git_visible(Path(), item):
             continue
 
         skill_md = item / "SKILL.md"
