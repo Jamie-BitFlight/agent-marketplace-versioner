@@ -65,9 +65,7 @@ def _is_gitignored(root: Path, path: Path) -> bool:
     if _GIT_PATH is None:
         raise NativeManifestError("git executable not found in PATH")
     result = subprocess.run(
-        [_GIT_PATH, "-C", str(root), "check-ignore", "--no-index", "-q", "--", path.as_posix()],
-        check=False,
-        capture_output=True,
+        [_GIT_PATH, "-C", str(root), "check-ignore", "-q", "--", path.as_posix()], check=False, capture_output=True
     )
     return result.returncode == 0
 

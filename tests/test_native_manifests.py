@@ -21,7 +21,7 @@ def _write_json(path: Path, data: object) -> None:
     path.write_text(json.dumps(data) + "\n", encoding="utf-8")
 
 
-def test_discovery_finds_native_manifests_anywhere_but_excludes_gitignored_files(tmp_path: Path) -> None:
+def test_discovery_finds_native_manifests_anywhere_and_retains_tracked_ignored_files(tmp_path: Path) -> None:
     _git(tmp_path, "init")
     _git(tmp_path, "config", "user.email", "test@example.invalid")
     _git(tmp_path, "config", "user.name", "Test")
@@ -42,6 +42,7 @@ def test_discovery_finds_native_manifests_anywhere_but_excludes_gitignored_files
     assert [manifest.path.as_posix() for manifest in manifests] == [
         "catalog/.acme-plugin/marketplace.json",
         "catalog/components/tool/.codex-plugin/plugin.json",
+        "ignored/.codex-plugin/plugin.json",
         "root.plugin.json",
     ]
     assert marketplace_sources(manifests[0], tmp_path) == [Path("catalog/components/tool")]

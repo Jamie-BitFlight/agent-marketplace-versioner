@@ -208,21 +208,30 @@ def get_git_status() -> dict[str, list[str]]:
     return status
 
 
-def _native_component_path(source_root: Path, filepath: Path) -> ComponentChange:
+def _native_component_path(source_root: Path, filepath: Path, operation: str) -> ComponentChange:
     relative = filepath.relative_to(source_root)
     parts = relative.parts
     relative_path = relative.as_posix()
-    if len(parts) >= _MIN_COMPONENT_PATH_PARTS and parts[0] == "skills" and not parts[1].startswith("."):
-        return {"component_type": "skill", "component_path": f"skills/{parts[1]}"}
-    if len(parts) == _MIN_DIRECT_COMPONENT_PATH_PARTS and parts[0] == "agents" and filepath.suffix == ".md":
-        return {"component_type": "agent", "component_path": relative_path}
-    if len(parts) == _MIN_DIRECT_COMPONENT_PATH_PARTS and parts[0] == "commands" and filepath.suffix == ".md":
-        return {"component_type": "command", "component_path": relative_path}
-    if parts and parts[0] == "hooks" and filepath.suffix == ".json":
-        return {"component_type": "hook", "component_path": relative_path}
-    if parts and parts[0] == "mcp":
-        return {"component_type": "mcp", "component_path": relative_path}
-    return {"component_type": "other", "component_path": relative_path}
+    match parts:
+        case ("skills", skill_name, *_) if not skill_name.startswith("."):
+            component_type = "other" if operation == "deleted" and filepath.name != "SKILL.md" else "skill"
+            component_path = relative_path if component_type == "other" else f"skills/{skill_name}"
+        case ("agents", _) if filepath.suffix == ".md":
+            component_type = "agent"
+            component_path = relative_path
+        case ("commands", _) if filepath.suffix == ".md":
+            component_type = "command"
+            component_path = relative_path
+        case ("hooks", *_) if filepath.suffix == ".json":
+            component_type = "hook"
+            component_path = relative_path
+        case ("mcp", *_):
+            component_type = "mcp"
+            component_path = relative_path
+        case _:
+            component_type = "other"
+            component_path = relative_path
+    return {"component_type": component_type, "component_path": component_path}
 
 
 def _native_file_changes(manifests: list[NativeManifest], status: dict[str, list[str]]) -> dict[Path, ComponentChanges]:
@@ -234,7 +243,7 @@ def _native_file_changes(manifests: list[NativeManifest], status: dict[str, list
             source_root = source_for_path(manifests, filepath)
             if source_root is None or (filepath in manifest_paths and operation != "modified"):
                 continue
-            changes[source_root][operation].append(_native_component_path(source_root, filepath))
+            changes[source_root][operation].append(_native_component_path(source_root, filepath, operation))
     return changes
 
 
@@ -354,6 +363,11 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run:
         }
         deleted = [source for source in local_entries if source not in local_plugins]
         added = [source for source in local_plugins if source not in local_entries]
+        renamed = {
+            source: _native_plugin_name(local_plugins[source], root)
+            for source, entry in local_entries.items()
+            if source in local_plugins and entry["name"] != _native_plugin_name(local_plugins[source], root)
+        }
         plugins = data.get("plugins", [])
         data["plugins"] = [
             entry
@@ -370,7 +384,9 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run:
                 "name": _native_plugin_name(manifest, root),
                 "source": f"./{relative_source.as_posix()}",
             })
-        changed = bool(deleted or added)
+        for source, name in renamed.items():
+            local_entries[source]["name"] = name
+        changed = bool(deleted or added or renamed)
         if not changed and (
             not bump or marketplace.version_key_path is None or not _marketplace_differs_from_head(marketplace.path)
         ):

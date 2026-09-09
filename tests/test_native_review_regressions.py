@@ -44,7 +44,7 @@ def test_check_uses_ignore_rules_at_refs_not_worktree(
     before = git(tmp_path, "diff")
     monkeypatch.chdir(tmp_path)
 
-    assert check_native_version_bumps(base) == ([] if ignored else [manifest])
+    assert check_native_version_bumps(base) == [manifest]
     assert git(tmp_path, "diff") == before
 
 
@@ -58,7 +58,7 @@ def test_empty_local_catalog_bootstraps_nonignored_native_roots(
     write_json(tmp_path / "catalog/components/tool/.codex-plugin/plugin.json", {"name": "tool", "version": "1.0.0"})
     write_json(tmp_path / "catalog/ignored/.claude-plugin/plugin.json", {"name": "ignored", "version": "1.0.0"})
     (tmp_path / ".gitignore").write_text("catalog/ignored/\n")
-    git(tmp_path, "add", "-f", ".")
+    git(tmp_path, "add", "catalog/.codex-plugin/marketplace.json", "catalog/components", ".gitignore")
     git(tmp_path, "commit", "--quiet", "-m", "base")
     monkeypatch.chdir(tmp_path)
 
@@ -207,3 +207,18 @@ def test_reconcile_ignores_nested_gitignored_invocable_skills(tmp_path: Path, mo
 
     assert CliRunner().invoke(app, ["reconcile", "--dry-run"]).exit_code == 0
     assert json.loads(manifest.read_text())["commands"] == []
+
+
+def test_sync_updates_local_catalog_name_after_plugin_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    catalog = tmp_path / ".claude-plugin/marketplace.json"
+    write_json(catalog, {"version": "1.0.0", "plugins": [{"name": "old", "source": "./tool"}]})
+    manifest = tmp_path / "tool/.claude-plugin/plugin.json"
+    write_json(manifest, {"name": "old", "version": "1.0.0"})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    write_json(manifest, {"name": "new", "version": "1.0.1"})
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_native_marketplaces() == [Path(".claude-plugin/marketplace.json")]
+    assert json.loads(catalog.read_text())["plugins"] == [{"name": "new", "source": "./tool"}]

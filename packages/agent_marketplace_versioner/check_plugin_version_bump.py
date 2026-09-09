@@ -45,7 +45,6 @@ import json
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 from agent_marketplace_versioner.auto_sync_manifests import (
@@ -89,46 +88,26 @@ def _git_paths(args: list[str]) -> list[Path]:
 
 
 def _native_manifests_at_ref(ref: str) -> list[NativeManifest]:
-    git_path = shutil.which("git")
-    if git_path is None:
-        msg = "git executable not found"
-        raise ValueError(msg)
     manifests: list[NativeManifest] = []
-    paths = _git_paths(["ls-tree", "-r", "--name-only", "-z", ref])
-    with tempfile.TemporaryDirectory(prefix="versioner-ignore-") as directory:
-        snapshot = Path(directory)
-        subprocess.run([git_path, "init", "--quiet", directory], check=True, capture_output=True)
-        for path in paths:
-            if path.name == ".gitignore":
-                content = subprocess.check_output([git_path, "show", f"{ref}:{path.as_posix()}"])
-                (snapshot / path).parent.mkdir(parents=True, exist_ok=True)
-                (snapshot / path).write_bytes(content)
-        for path in paths:
-            kind = manifest_kind(path)
-            if kind is None:
-                continue
-            (snapshot / path).parent.mkdir(parents=True, exist_ok=True)
-            ignored = subprocess.run(
-                [git_path, "-C", directory, "check-ignore", "--no-index", "-q", "--", path.as_posix()], check=False
+    for path in _git_paths(["ls-tree", "-r", "--name-only", "-z", ref]):
+        kind = manifest_kind(path)
+        if kind is None:
+            continue
+        manifests.append(
+            NativeManifest(
+                path=path,
+                kind=kind,
+                version_key_path=("metadata", "version") if kind == "marketplace" else ("version",),
             )
-            if ignored.returncode not in {0, 1}:
-                ignored.check_returncode()
-            if ignored.returncode != 0:
-                manifests.append(
-                    NativeManifest(
-                        path=path,
-                        kind=kind,
-                        version_key_path=("metadata", "version") if kind == "marketplace" else ("version",),
-                    )
-                )
+        )
     return manifests
 
 
-def _plugin_identity_at_ref(ref: str, manifest: NativeManifest) -> tuple[str, str, str] | None:
+def _plugin_identity_at_ref(ref: str, manifest: NativeManifest) -> tuple[str, str] | None:
     data = read_ref_json(ref, manifest.path)
     if not isinstance(data, dict) or not isinstance(name := data.get("name"), str):
         return None
-    return name, manifest.path.name, manifest.path.parent.name
+    return name, manifest.path.name
 
 
 def _moved_manifests_missing_bumps(
