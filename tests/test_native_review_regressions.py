@@ -123,3 +123,19 @@ def test_reconcile_native_layout_dry_run_and_repair(tmp_path: Path, monkeypatch:
     assert json.loads(kimi.read_text()) == scalar
     assert json.loads(marketplace.read_text()) == {"plugins": [{"name": "tool", "source": "./tool"}]}
     assert CliRunner().invoke(app, ["reconcile", "--dry-run"]).exit_code == 0
+
+
+def test_reconcile_explicit_empty_components(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    manifest = tmp_path / "tool/.codex-plugin/plugin.json"
+    write_json(manifest, {"name": "tool", "version": "1.0.0", "skills": []})
+    skill = tmp_path / "tool/skills/demo/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: demo\n---\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    monkeypatch.chdir(tmp_path)
+
+    assert CliRunner().invoke(app, ["reconcile", "--dry-run"]).exit_code == 1
+    assert CliRunner().invoke(app, ["reconcile"]).exit_code == 0
+    assert json.loads(manifest.read_text())["skills"] == ["./skills/demo"]

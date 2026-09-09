@@ -189,7 +189,7 @@ jobs:
 
   release:
     name: Tag and Release
-    needs: [prek, format, lint, typecheck-ty, test]
+    needs: [prek, format, lint, typecheck-ty, test, integration]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:

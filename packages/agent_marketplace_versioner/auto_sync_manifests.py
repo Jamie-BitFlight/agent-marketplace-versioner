@@ -223,7 +223,7 @@ def _native_file_changes(manifests: list[NativeManifest], status: dict[str, list
         for raw_path in status[operation]:
             filepath = Path(raw_path)
             source_root = source_for_path(manifests, filepath)
-            if source_root is None or filepath in manifest_paths:
+            if source_root is None or (filepath in manifest_paths and operation != "modified"):
                 continue
             changes[source_root][operation].append(_native_component_path(source_root, filepath))
     return changes
@@ -289,6 +289,17 @@ def _marketplace_entry_source(entry: _MarketplacePluginEntry) -> str | None:
     return None
 
 
+def _bump_native_marketplace_version(data: _MarketplaceJsonData, marketplace: NativeManifest, *, deleted: bool) -> None:
+    bump_type: Literal["major", "minor"] = "major" if deleted else "minor"
+    if marketplace.version_key_path == ("version",):
+        current_version = data.get("version", "0.0.0")
+        data["version"] = bump_version(current_version if isinstance(current_version, str) else "0.0.0", bump_type)
+        return
+    metadata = data.setdefault("metadata", {})
+    current_version = metadata.get("version", "0.0.0")
+    metadata["version"] = bump_version(current_version if isinstance(current_version, str) else "0.0.0", bump_type)
+
+
 def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run: bool = False) -> list[Path]:
     """Reconcile every Git-visible native marketplace with local plugin manifests.
 
@@ -336,6 +347,8 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run:
                 "name": _native_plugin_name(manifest, root),
                 "source": f"./{relative_source.as_posix()}",
             })
+        if not deleted and not added:
+            continue
         if not bump or marketplace.version_key_path is None:
             if deleted or added:
                 if not dry_run:
@@ -345,20 +358,7 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run:
         if dry_run:
             updated.append(marketplace.path)
             continue
-        bump_type: Literal["major", "minor", "patch"] = "major" if deleted else "minor" if added else "patch"
-        if marketplace.version_key_path == ("version",):
-            current_version = data.get("version", "0.0.0")
-            if not isinstance(current_version, str):
-                current_version = "0.0.0"
-            data["version"] = bump_version(current_version, bump_type)
-            _write_json_lf(marketplace_path, _format_json(data))
-            updated.append(marketplace.path)
-            continue
-        metadata = data.setdefault("metadata", {})
-        current_version = metadata.get("version", "0.0.0")
-        if not isinstance(current_version, str):
-            current_version = "0.0.0"
-        metadata["version"] = bump_version(current_version, bump_type)
+        _bump_native_marketplace_version(data, marketplace, deleted=bool(deleted))
         _write_json_lf(marketplace_path, _format_json(data))
         updated.append(marketplace.path)
     return updated
@@ -1461,7 +1461,7 @@ def _reconcile_mode_b(
     """
     raw = data.get(field_name, [])
     registered = list(raw) if isinstance(raw, list) else [raw] if isinstance(raw, str) else []
-    if not registered:
+    if field_name not in data:
         return False
 
     normalize = field_name == "skills"
@@ -1773,7 +1773,7 @@ def _reconcile_marketplace(plugins_root: Path, *, dry_run: bool) -> bool:
     # Only track locally-sourced plugins (relative path strings) in the stale check.
     # Plugins with external sources (dict with "source": "github" etc.) are managed
     # manually and must not be removed by reconciliation.
-    registered_names = {p["name"] for p in plugins_list if isinstance(p.get("source"), str)}
+    registered_names = {p["name"] for p in plugins_list if _marketplace_entry_source(p) is not None}
 
     # Discover plugins on disk — keyed by canonical name (from plugin.json),
     # mapped to directory name (for the source field).

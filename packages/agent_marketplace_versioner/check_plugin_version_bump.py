@@ -137,7 +137,7 @@ def check_native_version_bumps(base_ref: str, head_ref: str = "HEAD") -> list[Pa
             continue
         base_version = extract_version_from_json(read_ref_json(base, manifest.path), ["version"])
         head_version = extract_version_from_json(read_ref_json(head, manifest.path), ["version"])
-        if base_version is not None and head_version is not None and head_version <= base_version:
+        if base_version is not None and (head_version is None or head_version <= base_version):
             missing.append(manifest.path)
     return missing
 
