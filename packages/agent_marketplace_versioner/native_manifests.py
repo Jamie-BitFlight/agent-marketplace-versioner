@@ -24,7 +24,7 @@ class NativeManifest:
 
     path: Path
     kind: Literal["plugin", "marketplace"]
-    version_key_path: tuple[str, ...]
+    version_key_path: tuple[str, ...] | None
 
 
 def manifest_kind(path: Path) -> Literal["plugin", "marketplace"] | None:
@@ -83,16 +83,19 @@ def marketplace_root(manifest: NativeManifest) -> Path:
     return manifest.path.parent.parent
 
 
-def _version_key_path(root: Path, path: Path, kind: Literal["plugin", "marketplace"]) -> tuple[str, ...]:
+def _version_key_path(root: Path, path: Path, kind: Literal["plugin", "marketplace"]) -> tuple[str, ...] | None:
     if kind != "marketplace":
         return ("version",)
     try:
         data = json.loads((root / path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return ("metadata", "version")
+        return None
     if isinstance(data, dict) and isinstance(data.get("version"), str):
         return ("version",)
-    return ("metadata", "version")
+    metadata = data.get("metadata") if isinstance(data, dict) else None
+    if isinstance(metadata, dict) and isinstance(metadata.get("version"), str):
+        return ("metadata", "version")
+    return None
 
 
 def discover_manifests(root: Path = Path()) -> list[NativeManifest]:

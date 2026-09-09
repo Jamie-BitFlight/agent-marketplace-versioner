@@ -36,6 +36,9 @@ Run `prek install` or `pre-commit install`. Both runners install the Python pack
 and call `agent-marketplace-versioner sync` once per pre-commit run, without passing
 filenames. Stage intended content changes before running the hook. It stages
 updated version manifests and preserves the same bump on repeat runs.
+Each native manifest uses its own version at `HEAD` as its staged-change baseline.
+Catalog entry additions and removals are also reconciled and staged, without
+changing the catalog version or introducing a version field.
 
 ## GitHub Action
 
@@ -53,6 +56,10 @@ The default `command: check` reads the consumer repository at `repository`
 (the workflow workspace by default). Pass `command: sync`, `repair`, or `reconcile`
 only when local mutation is intended. Only `check` consumes `base-ref` and `head-ref`.
 The action does not commit or push. It supports Linux and macOS Bash runners.
+
+For post-merge catalog reconciliation, use `command: sync` with `marketplace: true`.
+This invokes `sync --marketplace`. The default `marketplace: false` keeps ordinary
+staged-manifest synchronization; the input has no effect on other commands.
 
 The action installs the source at its pinned checkout with `uv sync --locked`
 and no development dependencies. GitHub downloads actions without Git metadata,

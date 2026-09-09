@@ -69,6 +69,7 @@ marketplace reconciliation.
 | Input | Default | Meaning |
 | --- | --- | --- |
 | `command` | `check` | `check`, `audit`, `sync`, `repair`, or `reconcile` |
+| `marketplace` | `false` | Set `true` with `command: sync` for post-merge catalog reconciliation (`sync --marketplace`) |
 | `repository` | workflow workspace | Consumer Git repository directory |
 | `base-ref` | PR base SHA or push before SHA | Required base for `check` |
 | `head-ref` | PR head SHA or workflow SHA | Candidate for `check` |

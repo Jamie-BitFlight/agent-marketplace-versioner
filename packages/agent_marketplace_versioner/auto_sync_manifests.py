@@ -241,13 +241,17 @@ def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
         versions: list[str] = []
         changed = False
         for manifest in manifests_for_source(manifests, source_root):
-            manifest_updated, version = _update_plugin_manifest(manifest.path, changes, sync_components=True)
+            manifest_updated, version = _update_plugin_manifest(
+                manifest.path, changes, sync_components=True, compare_to_head=True
+            )
             changed |= manifest_updated
             versions.append(version)
             if manifest_updated:
                 _git_stage_file(manifest.path.as_posix())
         if changed and versions:
             updated[source_root] = versions[0]
+    for path in sync_native_marketplaces(root, bump=False):
+        _git_stage_file(path.as_posix())
     return updated
 
 
@@ -283,7 +287,11 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True) -> list[
     updated: list[Path] = []
     for marketplace in (manifest for manifest in manifests if manifest.kind == "marketplace"):
         marketplace_path = root / marketplace.path
-        if bump and _version_already_bumped(marketplace.path, list(marketplace.version_key_path)):
+        if (
+            bump
+            and marketplace.version_key_path is not None
+            and _version_already_bumped(marketplace.path, list(marketplace.version_key_path))
+        ):
             continue
         try:
             data: _MarketplaceJsonData = json.loads(marketplace_path.read_text(encoding="utf-8"))
@@ -317,11 +325,10 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True) -> list[
                 "name": _native_plugin_name(manifest, root),
                 "source": f"./{relative_source.as_posix()}",
             })
-        if not bump and not (deleted or added):
-            continue
-        if not bump:
-            _write_json_lf(marketplace_path, _format_json(data))
-            updated.append(marketplace.path)
+        if not bump or marketplace.version_key_path is None:
+            if deleted or added:
+                _write_json_lf(marketplace_path, _format_json(data))
+                updated.append(marketplace.path)
             continue
         bump_type: Literal["major", "minor", "patch"] = "major" if deleted else "minor" if added else "patch"
         if marketplace.version_key_path == ("version",):
@@ -946,7 +953,7 @@ def _plugin_manifest_paths(plugin_name: str) -> list[tuple[Path, bool]]:
 
 
 def _update_plugin_manifest(
-    plugin_json_path: Path, changes: ComponentChanges, *, sync_components: bool
+    plugin_json_path: Path, changes: ComponentChanges, *, sync_components: bool, compare_to_head: bool = False
 ) -> tuple[bool, str]:
 
     with plugin_json_path.open(encoding="utf-8") as f:
@@ -955,7 +962,7 @@ def _update_plugin_manifest(
     raw_ver = data.get("version", "0.0.0")
     current_version = raw_ver if isinstance(raw_ver, str) else "0.0.0"
 
-    base_ref = resolve_base()
+    base_ref = None if compare_to_head else resolve_base()
     if base_ref is not None:
         result = _update_from_base_ref(
             plugin_json_path, data, current_version, base_ref, changes, sync_components=sync_components
