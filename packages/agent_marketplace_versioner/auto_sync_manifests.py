@@ -277,7 +277,7 @@ def _marketplace_local_entries(
     return entries
 
 
-def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True) -> list[Path]:
+def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True, dry_run: bool = False) -> list[Path]:
     """Reconcile every Git-visible native marketplace with local plugin manifests.
 
     Returns:
@@ -298,14 +298,13 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True) -> list[
         except (OSError, json.JSONDecodeError):
             continue
         local_entries = _marketplace_local_entries(data, marketplace)
-        if not local_entries:
-            continue
         source_parents = {source.parent for source in local_entries}
         local_plugins = {
             manifest_root(manifest): manifest
             for manifest in manifests
             if manifest.kind == "plugin"
             if manifest_root(manifest).parent in source_parents
+            or (not local_entries and manifest_root(manifest).is_relative_to(marketplace_root(marketplace)))
         }
         deleted = [source for source in local_entries if source not in local_plugins]
         added = [source for source in local_plugins if source not in local_entries]
@@ -327,8 +326,12 @@ def sync_native_marketplaces(root: Path = Path(), *, bump: bool = True) -> list[
             })
         if not bump or marketplace.version_key_path is None:
             if deleted or added:
-                _write_json_lf(marketplace_path, _format_json(data))
+                if not dry_run:
+                    _write_json_lf(marketplace_path, _format_json(data))
                 updated.append(marketplace.path)
+            continue
+        if dry_run:
+            updated.append(marketplace.path)
             continue
         bump_type: Literal["major", "minor", "patch"] = "major" if deleted else "minor" if added else "patch"
         if marketplace.version_key_path == ("version",):
@@ -1833,6 +1836,36 @@ def reconcile(*, dry_run: bool) -> int:
         return 1
 
     return 0
+
+
+def reconcile_native_manifests(*, dry_run: bool) -> int:
+    """Reconcile native component arrays and catalog membership.
+
+    Returns:
+        One for detected drift in dry-run mode, otherwise zero.
+    """
+    drift = False
+    for manifest in discover_manifests():
+        if manifest.kind != "plugin":
+            continue
+        source = manifest_root(manifest)
+        data = json.loads(manifest.path.read_text(encoding="utf-8"))
+        changed = False
+        components = {
+            "skills": _discover_skills(source),
+            "agents": _discover_agents(source),
+            "commands": _discover_commands(source) + _discover_invocable_skills(source),
+        }
+        for field, items in components.items():
+            if isinstance(data.get(field), list):
+                changed |= _reconcile_mode_b(data, field, items, source.as_posix(), dry_run=dry_run)
+        if changed and not dry_run:
+            data["version"] = bump_version(data.get("version", "0.0.0"), "minor")
+            _write_json_lf(manifest.path, _format_json(data))
+        drift |= changed
+    drift |= bool(sync_native_marketplaces(bump=False, dry_run=dry_run))
+    print("Drift detected." if drift else "No drift detected — all manifests match filesystem.")
+    return int(drift and dry_run)
 
 
 def _report_plugin_update(plugin_name: str, new_version: str, changes: ComponentChanges) -> None:

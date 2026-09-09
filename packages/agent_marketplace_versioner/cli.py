@@ -6,7 +6,7 @@ from __future__ import annotations
 import typer
 
 from agent_marketplace_versioner.auto_sync_manifests import (
-    reconcile as reconcile_manifests,
+    reconcile_native_manifests,
     sync_native_marketplaces,
     sync_staged_manifests,
 )
@@ -60,5 +60,5 @@ def repair() -> None:
 def reconcile(
     dry_run: bool = typer.Option(False, "--dry-run", help="Report manifest drift without changing files."),
 ) -> None:
-    """Reconcile production plugin component arrays and marketplace membership."""
-    raise typer.Exit(reconcile_manifests(dry_run=dry_run))
+    """Reconcile native component arrays and marketplace membership."""
+    raise typer.Exit(reconcile_native_manifests(dry_run=dry_run))

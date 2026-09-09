@@ -42,7 +42,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from agent_marketplace_versioner.auto_sync_manifests import (
@@ -74,18 +77,38 @@ def _commit_ref(ref: str) -> str:
 
 
 def _native_manifests_at_ref(ref: str) -> list[NativeManifest]:
+    git_path = shutil.which("git")
+    if git_path is None:
+        msg = "git executable not found"
+        raise ValueError(msg)
     manifests: list[NativeManifest] = []
-    for raw_path in run_git_command(["ls-tree", "-r", "--name-only", ref]).splitlines():
-        path = Path(raw_path)
-        kind = manifest_kind(path)
-        if kind is not None:
-            manifests.append(
-                NativeManifest(
-                    path=path,
-                    kind=kind,
-                    version_key_path=("metadata", "version") if kind == "marketplace" else ("version",),
-                )
+    paths = [Path(raw_path) for raw_path in run_git_command(["ls-tree", "-r", "--name-only", ref]).splitlines()]
+    with tempfile.TemporaryDirectory(prefix="versioner-ignore-") as directory:
+        snapshot = Path(directory)
+        subprocess.run([git_path, "init", "--quiet", directory], check=True, capture_output=True)
+        for path in paths:
+            if path.name == ".gitignore":
+                content = subprocess.check_output([git_path, "show", f"{ref}:{path.as_posix()}"])
+                (snapshot / path).parent.mkdir(parents=True, exist_ok=True)
+                (snapshot / path).write_bytes(content)
+        for path in paths:
+            kind = manifest_kind(path)
+            if kind is None:
+                continue
+            (snapshot / path).parent.mkdir(parents=True, exist_ok=True)
+            ignored = subprocess.run(
+                [git_path, "-C", directory, "check-ignore", "--no-index", "-q", "--", path.as_posix()], check=False
             )
+            if ignored.returncode not in {0, 1}:
+                ignored.check_returncode()
+            if ignored.returncode != 0:
+                manifests.append(
+                    NativeManifest(
+                        path=path,
+                        kind=kind,
+                        version_key_path=("metadata", "version") if kind == "marketplace" else ("version",),
+                    )
+                )
     return manifests
 
 
@@ -97,9 +120,9 @@ def check_native_version_bumps(base_ref: str, head_ref: str = "HEAD") -> list[Pa
     """
     base = _commit_ref(base_ref)
     head = _commit_ref(head_ref)
-    manifests_by_path = {
-        manifest.path: manifest for manifest in [*_native_manifests_at_ref(base), *_native_manifests_at_ref(head)]
-    }
+    base_manifests = {manifest.path: manifest for manifest in _native_manifests_at_ref(base)}
+    head_manifests = {manifest.path: manifest for manifest in _native_manifests_at_ref(head)}
+    manifests_by_path = base_manifests | head_manifests
     changed_paths = [Path(path) for path in run_git_command(["diff", "--name-only", f"{base}...{head}"]).splitlines()]
     changed_roots = {
         source_root
@@ -108,6 +131,8 @@ def check_native_version_bumps(base_ref: str, head_ref: str = "HEAD") -> list[Pa
     }
     missing: list[Path] = []
     for manifest in sorted(manifests_by_path.values(), key=lambda manifest: manifest.path.as_posix()):
+        if manifest.path not in base_manifests or manifest.path not in head_manifests:
+            continue
         if manifest.kind != "plugin" or manifest_root(manifest) not in changed_roots:
             continue
         base_version = extract_version_from_json(read_ref_json(base, manifest.path), ["version"])
