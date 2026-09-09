@@ -76,13 +76,25 @@ def _commit_ref(ref: str) -> str:
     return resolved
 
 
+def _git_paths(args: list[str]) -> list[Path]:
+    git_path = shutil.which("git")
+    if git_path is None:
+        msg = "git executable not found"
+        raise ValueError(msg)
+    result = subprocess.run([git_path, *args], check=False, capture_output=True)
+    if result.returncode != 0:
+        message = result.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(message or f"git {' '.join(args)} failed")
+    return [Path(path.decode("utf-8", errors="surrogateescape")) for path in result.stdout.split(b"\0") if path]
+
+
 def _native_manifests_at_ref(ref: str) -> list[NativeManifest]:
     git_path = shutil.which("git")
     if git_path is None:
         msg = "git executable not found"
         raise ValueError(msg)
     manifests: list[NativeManifest] = []
-    paths = [Path(raw_path) for raw_path in run_git_command(["ls-tree", "-r", "--name-only", ref]).splitlines()]
+    paths = _git_paths(["ls-tree", "-r", "--name-only", "-z", ref])
     with tempfile.TemporaryDirectory(prefix="versioner-ignore-") as directory:
         snapshot = Path(directory)
         subprocess.run([git_path, "init", "--quiet", directory], check=True, capture_output=True)
@@ -120,10 +132,13 @@ def check_native_version_bumps(base_ref: str, head_ref: str = "HEAD") -> list[Pa
     """
     base = _commit_ref(base_ref)
     head = _commit_ref(head_ref)
+    if not run_git_command(["merge-base", base, head]):
+        msg = f"revisions have no merge base: {base_ref}, {head_ref}"
+        raise ValueError(msg)
     base_manifests = {manifest.path: manifest for manifest in _native_manifests_at_ref(base)}
     head_manifests = {manifest.path: manifest for manifest in _native_manifests_at_ref(head)}
     manifests_by_path = base_manifests | head_manifests
-    changed_paths = [Path(path) for path in run_git_command(["diff", "--name-only", f"{base}...{head}"]).splitlines()]
+    changed_paths = _git_paths(["diff", "--name-only", "-z", f"{base}...{head}"])
     changed_roots = {
         source_root
         for path in changed_paths

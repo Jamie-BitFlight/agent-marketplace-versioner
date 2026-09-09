@@ -154,6 +154,17 @@ def run_git_command(args: list[str]) -> str:
     return result.stdout.strip()
 
 
+def _run_git_bytes(args: list[str]) -> bytes:
+    if _GIT_PATH is None:
+        msg = "git executable not found in PATH"
+        raise FileNotFoundError(msg)
+    result = subprocess.run([_GIT_PATH, *args], capture_output=True, check=False)
+    if result.returncode != 0:
+        message = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(message or f"git {' '.join(args)} failed")
+    return result.stdout
+
+
 def get_git_status() -> dict[str, list[str]]:
     """Get staged file changes categorized by operation.
 
@@ -167,34 +178,31 @@ def get_git_status() -> dict[str, list[str]]:
     status: dict[str, list[str]] = {"added": [], "deleted": [], "modified": []}
 
     # Get staged changes
-    output = run_git_command(["diff", "--cached", "--name-status"])
-
-    min_fields = 2
-    rename_fields = 3
-
-    for line in output.split("\n"):
-        if not line.strip():
+    fields = (
+        _run_git_bytes(["diff", "--cached", "--name-status", "-z"])
+        .decode("utf-8", errors="surrogateescape")
+        .split("\0")
+    )
+    index = 0
+    while index < len(fields):
+        operation = fields[index]
+        index += 1
+        if not operation:
             continue
-
-        # Split all tab-separated fields:
-        #   A/D/M produce 2 fields: [operation, filepath]
-        #   R{score} produces 3 fields: [operation, old_path, new_path]
-        parts = line.split("\t")
-        if len(parts) < min_fields:
+        if index >= len(fields):
             continue
-
-        operation = parts[0]
-
         match operation:
             case "A":
-                status["added"].append(parts[1])
+                status["added"].append(fields[index])
             case "D":
-                status["deleted"].append(parts[1])
+                status["deleted"].append(fields[index])
             case "M":
-                status["modified"].append(parts[1])
-            case op if op.startswith("R") and len(parts) == rename_fields:
-                status["deleted"].append(parts[1])
-                status["added"].append(parts[2])
+                status["modified"].append(fields[index])
+            case op if op.startswith("R") and index + 1 < len(fields):
+                status["deleted"].append(fields[index])
+                status["added"].append(fields[index + 1])
+                index += 1
+        index += 1
 
     return status
 

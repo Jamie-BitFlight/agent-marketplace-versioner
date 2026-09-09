@@ -243,6 +243,24 @@ def test_staged_manifest_edit_bumps_its_plugin_version(tmp_path: Path, monkeypat
     assert json.loads(manifest.read_text())["version"] == "1.0.1"
 
 
+def test_staged_non_ascii_component_change_bumps_its_plugin_version(tmp_path: Path, monkeypatch: Any) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "Test")
+    manifest = tmp_path / ".codex-plugin/plugin.json"
+    _write_json(manifest, {"name": "tool", "version": "1.0.0"})
+    component = tmp_path / "café.md"
+    component.write_text("before\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    component.write_text("after\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path(): "1.0.1"}
+    assert json.loads(manifest.read_text())["version"] == "1.0.1"
+
+
 def test_version_check_rejects_a_removed_plugin_version(tmp_path: Path, monkeypatch: Any) -> None:
     _git(tmp_path, "init")
     _git(tmp_path, "config", "user.email", "test@example.invalid")
@@ -258,6 +276,25 @@ def test_version_check_rejects_a_removed_plugin_version(tmp_path: Path, monkeypa
     monkeypatch.chdir(tmp_path)
 
     assert check_native_version_bumps(base) == [Path(".codex-plugin/plugin.json")]
+
+
+def test_version_check_rejects_unrelated_revisions(tmp_path: Path, monkeypatch: Any) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "Test")
+    _write_json(tmp_path / ".codex-plugin/plugin.json", {"name": "tool", "version": "1.0.0"})
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
+    _git(tmp_path, "checkout", "--orphan", "unrelated")
+    _git(tmp_path, "rm", "-rf", ".")
+    _write_json(tmp_path / ".codex-plugin/plugin.json", {"name": "tool", "version": "2.0.0"})
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "unrelated")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError, match="no merge base"):
+        check_native_version_bumps(base)
 
 
 def test_version_check_requires_a_bump_for_changed_manifest_under_an_arbitrary_root(
