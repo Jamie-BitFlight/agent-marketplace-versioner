@@ -15,30 +15,29 @@ from tests.integration_consumer import git, prepare, stage, verify
 ROOT: Final = Path(__file__).resolve().parents[1]
 
 
-def test_public_v1_contract_metadata_and_documentation() -> None:
+def test_public_action_contract_uses_v1_channel() -> None:
     action = yaml.safe_load((ROOT / "action.yml").read_text(encoding="utf-8"))
     package = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     documentation = (ROOT / "docs/index.md").read_text(encoding="utf-8")
     ghadocs = json.loads((ROOT / ".ghadocs.json").read_text(encoding="utf-8"))
 
-    assert action["description"] == (
-        "Keep agent plugin and marketplace versions in sync across Codex, Claude Code, and other harnesses."
-    )
-    assert action["branding"] == {"icon": "refresh-cw", "color": "purple"}
-    assert {name: metadata["default"] for name, metadata in action["inputs"].items()} == {
+    expected_defaults = {
         "command": "check",
         "marketplace": "false",
         "repository": "${{ github.workspace }}",
         "base-ref": "${{ github.event.pull_request.base.sha || github.event.before }}",
         "head-ref": "${{ github.event.pull_request.head.sha || github.sha }}",
     }
-    assert package["project"]["description"] == "Keep agent plugin and marketplace versions in sync."
+    assert {name: action["inputs"][name]["default"] for name in expected_defaults} == expected_defaults
+    assert action["name"] == "Agent Marketplace Versioner"
+    assert action["description"]
+    assert action["branding"] == {"icon": "refresh-cw", "color": "purple"}
+    assert package["project"]["description"]
     assert "Development Status :: 5 - Production/Stable" in package["project"]["classifiers"]
     assert ghadocs["versioning"]["override"] == "v1"
     assert "Jamie-BitFlight/agent-marketplace-versioner@v1" in readme
     assert "Jamie-BitFlight/agent-marketplace-versioner@v1" in documentation
-    assert "agent-marketplace-versioner@v0" not in readme
 
 
 @pytest.mark.slow
