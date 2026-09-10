@@ -178,6 +178,47 @@ def test_staged_sync_fans_a_relocated_claude_manifest_version_to_ahead_siblings(
         assert staged["version"] == "0.3.11"
 
 
+def test_staged_sync_is_idempotent_when_adding_a_native_harness_manifest(tmp_path: Path, monkeypatch: Any) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "Test")
+    _write_json(tmp_path / ".codex-plugin/plugin.json", {"name": "tool", "version": "1.0.0"})
+    (tmp_path / "README.md").write_text("before\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    _write_json(tmp_path / ".claude-plugin/plugin.json", {"name": "tool", "version": "1.0.0"})
+    (tmp_path / "README.md").write_text("after\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path(): "1.0.1"}
+    first = subprocess.check_output(["git", "diff", "--cached"], cwd=tmp_path)
+    assert sync_staged_manifests(tmp_path) == {}
+    assert subprocess.check_output(["git", "diff", "--cached"], cwd=tmp_path) == first
+
+
+def test_staged_sync_preserves_explicit_agent_allowlists_across_a_component_rename(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "Test")
+    _write_json(
+        tmp_path / ".claude-plugin/plugin.json", {"name": "tool", "version": "1.0.0", "agents": ["./agents/old.md"]}
+    )
+    agent = tmp_path / "agents/old.md"
+    agent.parent.mkdir()
+    agent.write_text("old\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    _git(tmp_path, "mv", "agents/old.md", "agents/new.md")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path(): "2.0.0"}
+    staged = json.loads(subprocess.check_output(["git", "show", ":.claude-plugin/plugin.json"], cwd=tmp_path))
+    assert staged == {"name": "tool", "version": "2.0.0", "agents": ["./agents/new.md"]}
+
+
 @pytest.mark.parametrize(
     ("versions", "expected_version"), [(["0.3.1"] * 3, "0.3.2"), (["0.3.1", "1.3.1", "2.3.1"], "2.3.2")]
 )
