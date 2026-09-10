@@ -294,8 +294,7 @@ def _categorize_staged_entries(
         elif operation == "D" and source in relocated_deletions:
             status["deleted"].append(relocated_deletions[source].as_posix())
         elif destination is not None and relocated_paths.get(destination) == source:
-            if operation != "R100":
-                status["modified"].append(destination.as_posix())
+            status["modified"].append(destination.as_posix())
         elif destination is None:
             if operation == "A":
                 status["added"].append(source.as_posix())

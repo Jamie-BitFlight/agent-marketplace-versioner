@@ -117,7 +117,7 @@ def test_staged_sync_does_not_absorb_unstaged_manifest_edits(tmp_path: Path, mon
     assert json.loads(manifest.read_text(encoding="utf-8"))["description"] == "unstaged"
 
 
-def test_staged_sync_does_not_major_bump_a_renamed_native_plugin_root(tmp_path: Path, monkeypatch: Any) -> None:
+def test_staged_sync_patch_bumps_a_renamed_native_plugin_root(tmp_path: Path, monkeypatch: Any) -> None:
     _git(tmp_path, "init")
     _git(tmp_path, "config", "user.email", "test@example.invalid")
     _git(tmp_path, "config", "user.name", "Test")
@@ -136,9 +136,9 @@ def test_staged_sync_does_not_major_bump_a_renamed_native_plugin_root(tmp_path: 
     _git(tmp_path, "mv", "packages/claude/skills/demo", "skills/demo")
     monkeypatch.chdir(tmp_path)
 
-    assert sync_staged_manifests(tmp_path) == {}
+    assert sync_staged_manifests(tmp_path) == {Path(): "0.3.11"}
     for path in (Path(".claude-plugin/plugin.json"), Path(".codex-plugin/plugin.json"), Path("kimi.plugin.json")):
-        assert json.loads((tmp_path / path).read_text(encoding="utf-8"))["version"] == version
+        assert json.loads((tmp_path / path).read_text(encoding="utf-8"))["version"] == "0.3.11"
 
 
 def test_staged_sync_fans_a_relocated_claude_manifest_version_to_ahead_siblings(
