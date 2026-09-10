@@ -224,7 +224,13 @@ def _relocated_manifest_pairs(entries: list[tuple[str, Path, Path | None]]) -> d
     ]
     relocated: dict[Path, Path] = {}
     for source in deleted:
-        matches = [destination for destination in added if _is_native_manifest_relocation(source, destination)]
+        source_relative = source.relative_to(_native_manifest_root(source))
+        matches = [
+            destination
+            for destination in added
+            if destination.relative_to(_native_manifest_root(destination)) == source_relative
+            and _is_native_manifest_relocation(source, destination)
+        ]
         if len(matches) == 1:
             relocated[matches[0]] = source
     return relocated
@@ -252,8 +258,32 @@ def _relocated_file_pairs(
     return relocated_paths
 
 
+def _relocated_deletions(
+    entries: list[tuple[str, Path, Path | None]], relocated_manifests: dict[Path, Path]
+) -> dict[Path, Path]:
+    deleted = {source for operation, source, destination in entries if operation == "D" or destination is not None}
+    added = {
+        destination if destination is not None else source
+        for operation, source, destination in entries
+        if operation == "A" or destination is not None
+    }
+    relocated: dict[Path, Path] = {}
+    for destination, source in relocated_manifests.items():
+        old_root = _native_manifest_root(source)
+        new_root = _native_manifest_root(destination)
+        for path in deleted:
+            if path != old_root and old_root not in path.parents:
+                continue
+            new_path = new_root / path.relative_to(old_root)
+            if new_path not in added:
+                relocated[path] = new_path
+    return relocated
+
+
 def _categorize_staged_entries(
-    entries: list[tuple[str, Path, Path | None]], relocated_paths: dict[Path, Path]
+    entries: list[tuple[str, Path, Path | None]],
+    relocated_paths: dict[Path, Path],
+    relocated_deletions: dict[Path, Path],
 ) -> _GitStatus:
     status: _GitStatus = {"added": [], "deleted": [], "modified": [], "relocated_manifests": {}}
     for operation, source, destination in entries:
@@ -261,6 +291,8 @@ def _categorize_staged_entries(
             status["modified"].append(source.as_posix())
         elif operation == "D" and source in relocated_paths.values():
             continue
+        elif operation == "D" and source in relocated_deletions:
+            status["deleted"].append(relocated_deletions[source].as_posix())
         elif destination is not None and relocated_paths.get(destination) == source:
             if operation != "R100":
                 status["modified"].append(destination.as_posix())
@@ -285,7 +317,9 @@ def get_git_status() -> _GitStatus:
     """
     entries = _staged_name_status_entries()
     relocated_manifests = _relocated_manifest_pairs(entries)
-    status = _categorize_staged_entries(entries, _relocated_file_pairs(entries, relocated_manifests))
+    status = _categorize_staged_entries(
+        entries, _relocated_file_pairs(entries, relocated_manifests), _relocated_deletions(entries, relocated_manifests)
+    )
     status["relocated_manifests"] = {
         destination.as_posix(): source.as_posix() for destination, source in relocated_manifests.items()
     }

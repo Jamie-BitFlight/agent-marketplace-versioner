@@ -178,6 +178,64 @@ def test_staged_sync_fans_a_relocated_claude_manifest_version_to_ahead_siblings(
         assert staged["version"] == "0.3.11"
 
 
+def test_staged_sync_pairs_each_harness_manifest_when_relocating_a_plugin_root(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "Test")
+    version = "1.0.0"
+    for directory in (".claude-plugin", ".codex-plugin"):
+        _write_json(tmp_path / "packages/tool" / directory / "plugin.json", {"name": "tool", "version": version})
+    skill = tmp_path / "packages/tool/skills/demo/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("before\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    for directory in (".claude-plugin", ".codex-plugin"):
+        (tmp_path / directory).mkdir()
+        _git(tmp_path, "mv", f"packages/tool/{directory}/plugin.json", f"{directory}/plugin.json")
+    (tmp_path / "skills").mkdir()
+    _git(tmp_path, "mv", "packages/tool/skills/demo", "skills/demo")
+    (tmp_path / "skills/demo/SKILL.md").write_text("after\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path(): "1.0.1"}
+    for directory in (".claude-plugin", ".codex-plugin"):
+        staged = json.loads(subprocess.check_output(["git", "show", f":{directory}/plugin.json"], cwd=tmp_path))
+        assert staged["version"] == "1.0.1"
+
+
+def test_staged_sync_reconciles_deleted_component_during_plugin_root_relocation(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "Test")
+    for directory in (".claude-plugin", ".codex-plugin"):
+        _write_json(
+            tmp_path / "packages/tool" / directory / "plugin.json",
+            {"name": "tool", "version": "1.0.0", "agents": ["./agents/removed.md"]},
+        )
+    agent = tmp_path / "packages/tool/agents/removed.md"
+    agent.parent.mkdir(parents=True)
+    agent.write_text("removed\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    for directory in (".claude-plugin", ".codex-plugin"):
+        (tmp_path / directory).mkdir()
+        _git(tmp_path, "mv", f"packages/tool/{directory}/plugin.json", f"{directory}/plugin.json")
+    _git(tmp_path, "rm", "packages/tool/agents/removed.md")
+    _git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path(): "2.0.0"}
+    for directory in (".claude-plugin", ".codex-plugin"):
+        staged = json.loads(subprocess.check_output(["git", "show", f":{directory}/plugin.json"], cwd=tmp_path))
+        assert staged == {"name": "tool", "version": "2.0.0", "agents": []}
+
+
 def test_staged_sync_is_idempotent_when_adding_a_native_harness_manifest(tmp_path: Path, monkeypatch: Any) -> None:
     _git(tmp_path, "init")
     _git(tmp_path, "config", "user.email", "test@example.invalid")
