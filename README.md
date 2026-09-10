@@ -2,7 +2,7 @@
 
 <!-- start title -->
 
-# <img src=".github/ghadocs/branding.svg" width="60px" align="center" alt="branding<icon:activity color:blue>" /> GitHub Action: Agent Marketplace Versioner
+# <img src=".github/ghadocs/branding.svg" width="60px" align="center" alt="branding<icon:refresh-cw color:purple>" /> GitHub Action: Agent Marketplace Versioner
 
 <!-- end title -->
 <!-- start badges -->
@@ -15,7 +15,7 @@
 
 <!-- start description -->
 
-Check or synchronize native agent marketplace versions with the shared CLI.
+Keep agent plugin and marketplace versions in sync across Codex, Claude Code, and other harnesses.
 
 <!-- end description -->
 
@@ -24,7 +24,7 @@ Documentation: <https://bitflight.io/agent-marketplace-versioner/>.
 <!-- start usage -->
 
 ```yaml
-- uses: Jamie-BitFlight/agent-marketplace-versioner@v0.1.1
+- uses: Jamie-BitFlight/agent-marketplace-versioner@v1
   with:
     # Description: CLI command to run (check, audit, sync, repair, or reconcile). Only
     # check and audit are read-only.

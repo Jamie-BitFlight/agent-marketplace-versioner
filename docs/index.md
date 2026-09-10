@@ -28,13 +28,12 @@ reload a running agent. Choose the local evaluation process that suits your proj
 including direct CLI use instead of installing a hook. No per-consumer adapter or
 versioner-specific configuration file is required.
 
-Add this to the consumer's `.pre-commit-config.yaml`, replacing the revision with
-a reviewed immutable commit SHA:
+Add this to the consumer's `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
   - repo: https://github.com/Jamie-BitFlight/agent-marketplace-versioner
-    rev: <full-commit-sha>
+    rev: v1
     hooks:
       - id: agent-marketplace-versioner
 ```
@@ -53,7 +52,7 @@ changing the catalog version or introducing a version field.
 - uses: actions/checkout@v7
   with:
     fetch-depth: 0
-- uses: Jamie-BitFlight/agent-marketplace-versioner@<full-commit-sha>
+- uses: Jamie-BitFlight/agent-marketplace-versioner@v1
   with:
     base-ref: ${{ github.event.pull_request.base.sha }}
     head-ref: ${{ github.event.pull_request.head.sha }}
@@ -75,7 +74,7 @@ optional local cache-busting:
 - uses: actions/checkout@v7
   with:
     fetch-depth: 0
-- uses: Jamie-BitFlight/agent-marketplace-versioner@<full-commit-sha>
+- uses: Jamie-BitFlight/agent-marketplace-versioner@v1
   with:
     command: sync
     marketplace: true
@@ -85,7 +84,9 @@ It reconciles catalog entries and bumps existing marketplace versions, preservin
 versionless catalogs. Your publication workflow owns review, commit and push of the
 result; local plugin evaluation need not follow the same process.
 
-The action installs the source at its pinned checkout with `uv sync --locked`
+The `v1` tag advances only through compatible v1 releases. Pin an immutable
+commit SHA instead when your supply-chain policy requires it. The action installs
+the source at its selected checkout with `uv sync --locked`
 and no development dependencies. GitHub downloads actions without Git metadata,
 so the temporary installation uses package metadata version `0+action`; the
 reviewed action commit selects the actual code, and its lockfile selects dependencies.
