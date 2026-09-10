@@ -24,7 +24,7 @@ Documentation: <https://bitflight.io/agent-marketplace-versioner/>.
 <!-- start usage -->
 
 ```yaml
-- uses: Jamie-BitFlight/agent-marketplace-versioner@v0.0.0
+- uses: Jamie-BitFlight/agent-marketplace-versioner@v0.1.1
   with:
     # Description: CLI command to run (check, audit, sync, repair, or reconcile). Only
     # check and audit are read-only.
