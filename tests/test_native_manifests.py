@@ -236,6 +236,26 @@ def test_staged_sync_reconciles_deleted_component_during_plugin_root_relocation(
         assert staged == {"name": "tool", "version": "2.0.0", "agents": []}
 
 
+def test_staged_sync_propagates_a_manual_version_bump_without_incrementing_it(tmp_path: Path, monkeypatch: Any) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "Test")
+    for directory in (".claude-plugin", ".codex-plugin"):
+        _write_json(tmp_path / directory / "plugin.json", {"name": "tool", "version": "1.0.0"})
+    (tmp_path / "README.md").write_text("before\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    _write_json(tmp_path / ".claude-plugin/plugin.json", {"name": "tool", "version": "2.0.0"})
+    (tmp_path / "README.md").write_text("after\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path(): "2.0.0"}
+    for directory in (".claude-plugin", ".codex-plugin"):
+        staged = json.loads(subprocess.check_output(["git", "show", f":{directory}/plugin.json"], cwd=tmp_path))
+        assert staged["version"] == "2.0.0"
+
+
 def test_staged_sync_is_idempotent_when_adding_a_native_harness_manifest(tmp_path: Path, monkeypatch: Any) -> None:
     _git(tmp_path, "init")
     _git(tmp_path, "config", "user.email", "test@example.invalid")

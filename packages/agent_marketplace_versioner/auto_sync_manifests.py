@@ -409,6 +409,7 @@ def _shared_target_version(
         return None
     source_version = max(source_versions, key=lambda version: _parse_version_tuple(version) or (0, 0, 0))
     source_tuple = _parse_version_tuple(source_version)
+    baseline_tuples = [baseline for _, baseline in baselines if baseline is not None]
     already_bumped = [
         current_tuple is not None and baseline is not None and current_tuple > baseline
         for current, baseline in baselines
@@ -424,7 +425,7 @@ def _shared_target_version(
         for current, baseline in baselines
         if (current_tuple := _parse_version_tuple(current)) is not None
     ]
-    if source_tuple is not None and (not any(baseline is not None for _, baseline in baselines) or all(covered)):
+    if source_tuple is not None and (not baseline_tuples or source_tuple > max(baseline_tuples) or all(covered)):
         return source_version
     return bump_version(source_version, _determine_bump_type(changes))
 
