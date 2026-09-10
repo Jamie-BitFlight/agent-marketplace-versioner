@@ -117,9 +117,72 @@ def test_staged_sync_does_not_absorb_unstaged_manifest_edits(tmp_path: Path, mon
     assert json.loads(manifest.read_text(encoding="utf-8"))["description"] == "unstaged"
 
 
-@pytest.mark.parametrize("versions", [["0.3.1"] * 3, ["0.3.1", "1.3.1", "2.3.1"]])
-def test_staged_sync_uses_independent_head_versions_when_a_manifest_is_new_since_base(
-    tmp_path: Path, monkeypatch: Any, versions: list[str]
+def test_staged_sync_does_not_major_bump_a_renamed_native_plugin_root(tmp_path: Path, monkeypatch: Any) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "Test")
+    version = "0.3.10"
+    _write_json(tmp_path / "packages/claude/.claude-plugin/plugin.json", {"name": "tool", "version": version})
+    _write_json(tmp_path / ".codex-plugin/plugin.json", {"name": "tool", "version": version})
+    _write_json(tmp_path / "kimi.plugin.json", {"name": "tool", "version": version})
+    skill = tmp_path / "packages/claude/skills/demo/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: demo\n---\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    (tmp_path / ".claude-plugin").mkdir()
+    _git(tmp_path, "mv", "packages/claude/.claude-plugin/plugin.json", ".claude-plugin/plugin.json")
+    (tmp_path / "skills").mkdir()
+    _git(tmp_path, "mv", "packages/claude/skills/demo", "skills/demo")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {}
+    for path in (Path(".claude-plugin/plugin.json"), Path(".codex-plugin/plugin.json"), Path("kimi.plugin.json")):
+        assert json.loads((tmp_path / path).read_text(encoding="utf-8"))["version"] == version
+
+
+def test_staged_sync_fans_a_relocated_claude_manifest_version_to_ahead_siblings(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "Test")
+    version = "0.3.10"
+    _write_json(
+        tmp_path / "packages/claude/.claude-plugin/plugin.json",
+        {"name": "tool", "version": version, "description": "before"},
+    )
+    for path in (Path(".codex-plugin/plugin.json"), Path("kimi.plugin.json")):
+        _write_json(tmp_path / path, {"name": "tool", "version": "0.3.9", "description": "before"})
+    skill = tmp_path / "packages/claude/skills/demo/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: demo\n---\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    (tmp_path / ".claude-plugin").mkdir()
+    _git(tmp_path, "mv", "packages/claude/.claude-plugin/plugin.json", ".claude-plugin/plugin.json")
+    (tmp_path / "skills").mkdir()
+    _git(tmp_path, "mv", "packages/claude/skills/demo", "skills/demo")
+    _write_json(tmp_path / ".claude-plugin/plugin.json", {"name": "tool", "version": version, "description": "after"})
+    for path in (Path(".codex-plugin/plugin.json"), Path("kimi.plugin.json")):
+        _write_json(tmp_path / path, {"name": "tool", "version": version, "description": "before"})
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "native migration")
+    _git(tmp_path, "reset", "--mixed", "HEAD~")
+    _git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path(): "0.3.11"}
+    for path in (Path(".claude-plugin/plugin.json"), Path(".codex-plugin/plugin.json"), Path("kimi.plugin.json")):
+        staged = json.loads(subprocess.check_output(["git", "show", f":{path}"], cwd=tmp_path))
+        assert staged["version"] == "0.3.11"
+
+
+@pytest.mark.parametrize(
+    ("versions", "expected_version"), [(["0.3.1"] * 3, "0.3.2"), (["0.3.1", "1.3.1", "2.3.1"], "2.3.2")]
+)
+def test_staged_sync_uses_the_highest_sibling_version_when_a_manifest_is_new_since_base(
+    tmp_path: Path, monkeypatch: Any, versions: list[str], expected_version: str
 ) -> None:
     _git(tmp_path, "init", "--initial-branch=main")
     _git(tmp_path, "config", "user.email", "test@example.invalid")
@@ -139,9 +202,9 @@ def test_staged_sync_uses_independent_head_versions_when_a_manifest_is_new_since
     _git(tmp_path, "add", "README.md")
     monkeypatch.chdir(tmp_path)
 
-    assert sync_staged_manifests(tmp_path) == {Path(): versions[2].replace(".1", ".2")}
-    for path, version in zip(paths, versions, strict=True):
-        assert json.loads((tmp_path / path).read_text())["version"] == version.replace(".1", ".2")
+    assert sync_staged_manifests(tmp_path) == {Path(): expected_version}
+    for path in paths:
+        assert json.loads((tmp_path / path).read_text())["version"] == expected_version
     first = subprocess.check_output(["git", "diff", "--cached"], cwd=tmp_path)
     assert sync_staged_manifests(tmp_path) == {}
     assert subprocess.check_output(["git", "diff", "--cached"], cwd=tmp_path) == first

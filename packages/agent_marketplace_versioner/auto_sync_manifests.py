@@ -199,9 +199,10 @@ def get_git_status() -> dict[str, list[str]]:
                 status["deleted"].append(fields[index])
             case "M":
                 status["modified"].append(fields[index])
+            case "R100" if index + 1 < len(fields):
+                index += 1
             case op if op.startswith("R") and index + 1 < len(fields):
-                status["deleted"].append(fields[index])
-                status["added"].append(fields[index + 1])
+                status["modified"].append(fields[index + 1])
                 index += 1
         index += 1
 
@@ -269,6 +270,25 @@ def _native_file_changes(manifests: list[NativeManifest], status: dict[str, list
     return changes
 
 
+def _shared_target_version(manifests: list[NativeManifest], changes: ComponentChanges) -> str | None:
+    source_versions: list[str] = []
+    already_bumped: list[bool] = []
+    for manifest in manifests:
+        staged_data = _read_staged_json(manifest.path)
+        current_version = _extract_str_version(staged_data, "version") or "0.0.0"
+        source_versions.append(current_version)
+        current_tuple = _parse_version_tuple(current_version)
+        head_version = _extract_str_version(read_ref_json("HEAD", manifest.path), "version")
+        head_tuple = _parse_version_tuple(head_version) if head_version is not None else None
+        already_bumped.append(current_tuple is not None and head_tuple is not None and current_tuple > head_tuple)
+    if not source_versions:
+        return None
+    source_version = max(source_versions, key=lambda version: _parse_version_tuple(version) or (0, 0, 0))
+    if all(already_bumped):
+        return source_version
+    return bump_version(source_version, _determine_bump_type(changes))
+
+
 def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
     """Apply staged content changes to every affected native plugin manifest.
 
@@ -279,9 +299,13 @@ def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
     manifests = [manifest for manifest in discover_manifests(root) if manifest.path in staged_paths]
     updated: dict[Path, str] = {}
     for source_root, changes in _native_file_changes(manifests, get_git_status()).items():
+        source_manifests = manifests_for_source(manifests, source_root)
+        target_version = _shared_target_version(source_manifests, changes)
+        if target_version is None:
+            continue
         versions: list[str] = []
         changed = False
-        for manifest in manifests_for_source(manifests, source_root):
+        for manifest in source_manifests:
             original_content = manifest.path.read_bytes()
             unstaged_change = _has_unstaged_change(manifest.path)
             staged_data = _read_staged_json(manifest.path)
@@ -292,6 +316,11 @@ def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
                 manifest.path, changes, sync_components=True, compare_to_head=True
             )
             generated_data = json.loads(manifest.path.read_text(encoding="utf-8"))
+            if generated_data.get("version") != target_version:
+                generated_data["version"] = target_version
+                _write_json_lf(manifest.path, _format_json(generated_data))
+                manifest_updated = True
+            version = target_version
             changed |= manifest_updated
             versions.append(version)
             if manifest_updated and generated_data is not None:
