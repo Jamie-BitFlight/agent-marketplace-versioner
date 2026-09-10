@@ -32,6 +32,8 @@ def test_release_workflow_advances_v1_without_rewriting_release_tags(tmp_path: P
     git(repo, "push", "--quiet", "-u", "origin", "main")
     git(repo, "tag", "--annotate", "v1.0.0", "--message", "v1.0.0")
     git(repo, "push", "--quiet", "origin", "v1.0.0")
+    git(repo, "config", "--unset", "user.name")
+    git(repo, "config", "--unset", "user.email")
 
     env = {**os.environ, "RELEASE_TAG": "v1.0.0"}
     subprocess.run(["bash", "-eo", "pipefail", "-c", advance_v1["run"]], cwd=repo, env=env, check=True)
