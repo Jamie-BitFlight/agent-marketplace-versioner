@@ -42,9 +42,20 @@ Run `prek install` or `pre-commit install`. Both runners install the Python pack
 and call `agent-marketplace-versioner sync` once per pre-commit run, without passing
 filenames. Stage intended content changes before running the hook. It stages
 updated version manifests and preserves the same bump on repeat runs.
-Each native manifest uses its own version at `HEAD` as its staged-change baseline.
+Each plugin source root computes one shared version for all of its native manifests,
+using the highest sibling version as its staged-change baseline.
 Catalog entry additions and removals are also reconciled and staged, without
 changing the catalog version or introducing a version field.
+
+`rev: v1` is a moving compatibility tag, but each runner caches the revision first
+resolved for that literal value. After a new v1 release, refresh an existing local
+installation before expecting it to run the newer hook:
+
+```sh
+prek clean && prek install --install-hooks
+# or
+pre-commit clean && pre-commit install --install-hooks
+```
 
 ## GitHub Action
 
