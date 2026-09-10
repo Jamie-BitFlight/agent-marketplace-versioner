@@ -19,6 +19,8 @@ jobs:
         with:
           fetch-depth: 0
       - uses: bitflight-devops/github-action-readme-generator@ab53331dcdc69958675cc61d400a5700d3ac7eec # v1.12.8
+      - name: Remove generated trailing whitespace
+        run: sed -i 's/[[:space:]]*$//' README.md
       - uses: stefanzweifel/git-auto-commit-action@778341af668090896ca464160c2def5d1d1a3eb0 # v6
         with:
           commit_message: "docs: regenerate README"

@@ -28,28 +28,28 @@ Documentation: <https://bitflight.io/agent-marketplace-versioner/>.
   with:
     # Description: CLI command to run (check, audit, sync, repair, or reconcile). Only
     # check and audit are read-only.
-    # 
+    #
     # Default: check
     command: ''
 
     # Description: Set to true with command sync to reconcile and version marketplace
     # catalogs.
-    # 
+    #
     # Default: false
     marketplace: ''
 
     # Description: Consumer Git repository directory.
-    # 
+    #
     # Default: ${{ github.workspace }}
     repository: ''
 
     # Description: Base revision for check. The checkout must contain this revision.
-    # 
+    #
     # Default: ${{ github.event.pull_request.base.sha || github.event.before }}
     base-ref: ''
 
     # Description: Candidate revision for check.
-    # 
+    #
     # Default: ${{ github.event.pull_request.head.sha || github.sha }}
     head-ref: ''
 ```
