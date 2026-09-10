@@ -48,6 +48,12 @@ def test_release_workflow_advances_v1_without_rewriting_release_tags(tmp_path: P
     env["RELEASE_TAG"] = "v1.0.1"
     subprocess.run(["bash", "-eo", "pipefail", "-c", advance_v1["run"]], cwd=repo, env=env, check=True)
     assert git(repo, "ls-remote", "origin", "refs/tags/v1^{}").split()[0] == second_commit
+
+    git(repo, "tag", "--annotate", "v1.not-semver", "--message", "v1.not-semver")
+    git(repo, "push", "--quiet", "origin", "v1.not-semver")
+    env["RELEASE_TAG"] = "v1.not-semver"
+    subprocess.run(["bash", "-eo", "pipefail", "-c", advance_v1["run"]], cwd=repo, env=env, check=True)
+    assert git(repo, "ls-remote", "origin", "refs/tags/v1^{}").split()[0] == second_commit
     assert git(repo, "ls-remote", "origin", "refs/tags/v1.0.0^{}").split()[0] == first_commit
 
     git(repo, "tag", "--annotate", "v2.0.0", "--message", "v2.0.0")
