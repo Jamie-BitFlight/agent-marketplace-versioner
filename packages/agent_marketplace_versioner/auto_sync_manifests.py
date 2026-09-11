@@ -289,8 +289,6 @@ def _categorize_staged_entries(
     for operation, source, destination in entries:
         if operation == "A" and source in relocated_paths:
             status["modified"].append(source.as_posix())
-        elif operation == "D" and source in relocated_paths.values():
-            continue
         elif operation == "D" and source in relocated_deletions:
             status["deleted"].append(relocated_deletions[source].as_posix())
         elif destination is not None and relocated_paths.get(destination) == source:
@@ -383,6 +381,13 @@ def _native_file_changes(manifests: list[NativeManifest], status: _GitStatus) ->
             ):
                 continue
             changes[source_root][operation].append(_native_component_path(source_root, filepath, operation))
+    for source in status.get("relocated_manifests", {}).values():
+        source_path = Path(source)
+        source_root = source_path.parent if source_path.name.endswith(".plugin.json") else source_path.parent.parent
+        if manifests_for_source(manifests, source_root):
+            deleted_change = _native_component_path(source_root, source_path, "deleted")
+            if deleted_change not in changes[source_root]["deleted"]:
+                changes[source_root]["deleted"].append(deleted_change)
     return changes
 
 

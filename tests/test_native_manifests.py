@@ -141,6 +141,25 @@ def test_staged_sync_patch_bumps_a_renamed_native_plugin_root(tmp_path: Path, mo
         assert json.loads((tmp_path / path).read_text(encoding="utf-8"))["version"] == "0.3.11"
 
 
+def test_staged_sync_bumps_remaining_sibling_when_one_harness_manifest_moves(tmp_path: Path, monkeypatch: Any) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "Test")
+    _write_json(tmp_path / "packages/tool/.claude-plugin/plugin.json", {"name": "tool", "version": "1.0.0"})
+    _write_json(tmp_path / "packages/tool/.codex-plugin/plugin.json", {"name": "tool", "version": "1.0.0"})
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    (tmp_path / ".claude-plugin").mkdir()
+    _git(tmp_path, "mv", "packages/tool/.claude-plugin/plugin.json", ".claude-plugin/plugin.json")
+    _git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path(): "1.0.1", Path("packages/tool"): "1.0.1"}
+    for path in (Path(".claude-plugin/plugin.json"), Path("packages/tool/.codex-plugin/plugin.json")):
+        staged = json.loads(subprocess.check_output(["git", "show", f":{path}"], cwd=tmp_path))
+        assert staged["version"] == "1.0.1"
+
+
 def test_staged_sync_fans_a_relocated_claude_manifest_version_to_ahead_siblings(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
