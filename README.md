@@ -73,3 +73,9 @@ Documentation: <https://bitflight.io/agent-marketplace-versioner/>.
 
 
 <!-- end outputs -->
+
+## Agent-assisted setup
+
+Want your agent to set up the plugin updater for you? Give it this:
+
+> Set up the agent-marketplace-versioner for the marketplace in this repo following its [setup skill](https://github.com/Jamie-BitFlight/agent-marketplace-versioner/blob/main/skills/marketplace-versioning/SKILL.md)

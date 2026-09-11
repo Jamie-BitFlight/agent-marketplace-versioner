@@ -223,6 +223,7 @@ __marimo__/
 # skilllint-aligned project state
 .worktrees
 .omo/
+.review/
 .hermes/
 .tmp/
 .coverage*
