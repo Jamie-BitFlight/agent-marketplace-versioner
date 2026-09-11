@@ -9,40 +9,45 @@ live in [Commands](index.md#commands); hook and Action snippets in
 | Surface | Install |
 | --- | --- |
 | CLI | `uv tool install agent-marketplace-versioner` (PyPI) → `agent-marketplace-versioner` on PATH |
-| pre-commit hook | Repo stanza at `rev: v1` in the consumer's `.pre-commit-config.yaml`, then `prek install` — see [Git hook](index.md#git-hook) |
-| GitHub Action | `uses: Jamie-BitFlight/agent-marketplace-versioner@v1` — see [GitHub Action](index.md#github-action) |
+| pre-commit hook | Repo stanza in the consumer's `.pre-commit-config.yaml` (revision per the snippet), then `prek install` — see [Git hook](index.md#git-hook) |
+| GitHub Action | `uses: Jamie-BitFlight/agent-marketplace-versioner@<rev>` — see [GitHub Action](index.md#github-action) |
 
 No per-consumer adapter or versioner-specific configuration file is required.
 The CLI needs `git` on PATH.
 
 ## Exclude manifests from formatters and linters
 
-The versioner rewrites `plugin.json`, `*.plugin.json`, and `marketplace.json`
-with a canonical style (2-space indent, trailing newline). If a commit-time
-formatter (biome, prettier, oxfmt/oxlint, ...) also touches them, each pass
-reformats against the other and hooks cycle until one side stops; CI format
-checks flag the same churn. Exclude these files everywhere they are formatted
-or linted — the formatter's own config so CI inherits it:
+The versioner rewrites `plugin.json`, `*.plugin.json`, `*-plugin.json`, and
+`marketplace.json` with a canonical style (2-space indent, trailing newline).
+If a commit-time formatter (biome, prettier, oxfmt/oxlint, ...) also touches
+them, each pass reformats against the other and hooks cycle until one side
+stops; CI format checks flag the same churn. Exclude these files everywhere
+they are formatted or linted — the formatter's own config so CI inherits it:
 
-```json5
-// prettier: .prettierignore
+```text
+# prettier: .prettierignore
 **/plugin.json
 **/*.plugin.json
+**/*-plugin.json
 **/marketplace.json
 ```
 
-```json5
-// biome.json — formatter and linter
+```json
+// biome.json — formatter and linter; "**" must lead for negations to apply
 {
   "files": {
-    "includes": ["!**/plugin.json", "!**/*.plugin.json", "!**/marketplace.json"]
+    "includes": [
+      "**",
+      "!**/plugin.json",
+      "!**/*.plugin.json",
+      "!**/*-plugin.json",
+      "!**/marketplace.json"
+    ]
   }
 }
 ```
 
-```toml
-# oxlint / oxfmt config — same three globs in its ignore/exclude option
-```
+For oxlint/oxfmt, list the same four globs in its ignore/exclude option.
 
 For pre-commit, also narrow the hook's own `files`/`exclude` so the formatter
 hook never receives the manifests, keeping each versioner-managed file owned by
