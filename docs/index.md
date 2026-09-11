@@ -28,13 +28,12 @@ reload a running agent. Choose the local evaluation process that suits your proj
 including direct CLI use instead of installing a hook. No per-consumer adapter or
 versioner-specific configuration file is required.
 
-Add this to the consumer's `.pre-commit-config.yaml`, replacing the revision with
-a reviewed immutable commit SHA:
+Add this to the consumer's `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
   - repo: https://github.com/Jamie-BitFlight/agent-marketplace-versioner
-    rev: <full-commit-sha>
+    rev: v1
     hooks:
       - id: agent-marketplace-versioner
 ```
@@ -43,9 +42,20 @@ Run `prek install` or `pre-commit install`. Both runners install the Python pack
 and call `agent-marketplace-versioner sync` once per pre-commit run, without passing
 filenames. Stage intended content changes before running the hook. It stages
 updated version manifests and preserves the same bump on repeat runs.
-Each native manifest uses its own version at `HEAD` as its staged-change baseline.
+Each plugin source root computes one shared version for all of its native manifests,
+using the highest sibling version as its staged-change baseline.
 Catalog entry additions and removals are also reconciled and staged, without
 changing the catalog version or introducing a version field.
+
+`rev: v1` is a moving compatibility tag, but each runner caches the revision first
+resolved for that literal value. After a new v1 release, refresh an existing local
+installation before expecting it to run the newer hook:
+
+```sh
+prek clean && prek install --install-hooks
+# or
+pre-commit clean && pre-commit install --install-hooks
+```
 
 ## GitHub Action
 
@@ -53,7 +63,7 @@ changing the catalog version or introducing a version field.
 - uses: actions/checkout@v7
   with:
     fetch-depth: 0
-- uses: Jamie-BitFlight/agent-marketplace-versioner@<full-commit-sha>
+- uses: Jamie-BitFlight/agent-marketplace-versioner@v1
   with:
     base-ref: ${{ github.event.pull_request.base.sha }}
     head-ref: ${{ github.event.pull_request.head.sha }}
@@ -75,7 +85,7 @@ optional local cache-busting:
 - uses: actions/checkout@v7
   with:
     fetch-depth: 0
-- uses: Jamie-BitFlight/agent-marketplace-versioner@<full-commit-sha>
+- uses: Jamie-BitFlight/agent-marketplace-versioner@v1
   with:
     command: sync
     marketplace: true
@@ -85,7 +95,9 @@ It reconciles catalog entries and bumps existing marketplace versions, preservin
 versionless catalogs. Your publication workflow owns review, commit and push of the
 result; local plugin evaluation need not follow the same process.
 
-The action installs the source at its pinned checkout with `uv sync --locked`
+The `v1` tag advances only through compatible v1 releases. Pin an immutable
+commit SHA instead when your supply-chain policy requires it. The action installs
+the source at its selected checkout with `uv sync --locked`
 and no development dependencies. GitHub downloads actions without Git metadata,
 so the temporary installation uses package metadata version `0+action`; the
 reviewed action commit selects the actual code, and its lockfile selects dependencies.

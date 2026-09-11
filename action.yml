@@ -1,5 +1,8 @@
 name: Agent Marketplace Versioner
-description: Check or synchronize native agent marketplace versions with the shared CLI.
+description: Keep agent plugin and marketplace versions in sync across Codex, Claude Code, and other harnesses.
+branding:
+  icon: refresh-cw
+  color: purple
 inputs:
   command:
     description: CLI command to run (check, audit, sync, repair, or reconcile). Only check and audit are read-only.

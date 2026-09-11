@@ -53,6 +53,7 @@ from agent_marketplace_versioner.native_manifests import (
     NativeManifest,
     discover_manifests,
     is_git_visible,
+    manifest_kind,
     manifest_root,
     manifests_for_source,
     marketplace_root,
@@ -90,6 +91,13 @@ class ComponentChanges(TypedDict):
     added: list[ComponentChange]
     deleted: list[ComponentChange]
     modified: list[ComponentChange]
+
+
+class _GitStatus(TypedDict):
+    added: list[str]
+    deleted: list[str]
+    modified: list[str]
+    relocated_manifests: dict[str, str]
 
 
 class MarketplaceChanges(TypedDict):
@@ -166,24 +174,30 @@ def _run_git_bytes(args: list[str]) -> bytes:
     return result.stdout
 
 
-def get_git_status() -> dict[str, list[str]]:
-    """Get staged file changes categorized by operation.
+def _native_manifest_root(path: Path) -> Path:
+    return path.parent if path.name.endswith((".plugin.json", "-plugin.json")) else path.parent.parent
 
-    Returns:
-        {
-            'added': ['path/to/new/file'],
-            'deleted': ['path/to/deleted/file'],
-            'modified': ['path/to/changed/file'],
-        }
-    """
-    status: dict[str, list[str]] = {"added": [], "deleted": [], "modified": []}
 
-    # Get staged changes
+def _is_native_manifest_relocation(source: Path, destination: Path) -> bool:
+    if manifest_kind(source) != "plugin" or manifest_kind(destination) != "plugin":
+        return False
+    source_data = read_ref_json("HEAD", source)
+    destination_data = _read_staged_json(destination)
+    return (
+        isinstance(source_data, dict)
+        and isinstance(destination_data, dict)
+        and isinstance(source_data.get("name"), str)
+        and source_data.get("name") == destination_data.get("name")
+    )
+
+
+def _staged_name_status_entries() -> list[tuple[str, Path, Path | None]]:
     fields = (
-        _run_git_bytes(["diff", "--cached", "--name-status", "-z"])
+        _run_git_bytes(["diff", "--cached", "-M", "--name-status", "-z"])
         .decode("utf-8", errors="surrogateescape")
         .split("\0")
     )
+    entries: list[tuple[str, Path, Path | None]] = []
     index = 0
     while index < len(fields):
         operation = fields[index]
@@ -192,19 +206,120 @@ def get_git_status() -> dict[str, list[str]]:
             continue
         if index >= len(fields):
             continue
-        match operation:
-            case "A":
-                status["added"].append(fields[index])
-            case "D":
-                status["deleted"].append(fields[index])
-            case "M":
-                status["modified"].append(fields[index])
-            case op if op.startswith("R") and index + 1 < len(fields):
-                status["deleted"].append(fields[index])
-                status["added"].append(fields[index + 1])
-                index += 1
+        if operation.startswith("R") and index + 1 < len(fields):
+            entries.append((operation, Path(fields[index]), Path(fields[index + 1])))
+            index += 1
+        else:
+            entries.append((operation, Path(fields[index]), None))
         index += 1
+    return entries
 
+
+def _relocated_manifest_pairs(entries: list[tuple[str, Path, Path | None]]) -> dict[Path, Path]:
+    deleted = [source for operation, source, destination in entries if operation == "D" or destination is not None]
+    added = [
+        destination if destination is not None else source
+        for operation, source, destination in entries
+        if operation == "A" or destination is not None
+    ]
+    relocated: dict[Path, Path] = {}
+    for source in deleted:
+        source_relative = source.relative_to(_native_manifest_root(source))
+        matches = [
+            destination
+            for destination in added
+            if destination.relative_to(_native_manifest_root(destination)) == source_relative
+            and _is_native_manifest_relocation(source, destination)
+        ]
+        if len(matches) == 1:
+            relocated[matches[0]] = source
+    return relocated
+
+
+def _relocated_file_pairs(
+    entries: list[tuple[str, Path, Path | None]], relocated_manifests: dict[Path, Path]
+) -> dict[Path, Path]:
+    deleted = {source for operation, source, destination in entries if operation == "D" or destination is not None}
+    added = {
+        destination if destination is not None else source
+        for operation, source, destination in entries
+        if operation == "A" or destination is not None
+    }
+    relocated_paths: dict[Path, Path] = {}
+    for destination, source in relocated_manifests.items():
+        old_root = _native_manifest_root(source)
+        new_root = _native_manifest_root(destination)
+        for path in deleted:
+            if path == old_root or old_root not in path.parents:
+                continue
+            new_path = new_root / path.relative_to(old_root)
+            if new_path in added:
+                relocated_paths[new_path] = path
+    return relocated_paths
+
+
+def _relocated_deletions(
+    entries: list[tuple[str, Path, Path | None]], relocated_manifests: dict[Path, Path]
+) -> dict[Path, Path]:
+    deleted = {source for operation, source, destination in entries if operation == "D" or destination is not None}
+    added = {
+        destination if destination is not None else source
+        for operation, source, destination in entries
+        if operation == "A" or destination is not None
+    }
+    relocated: dict[Path, Path] = {}
+    for destination, source in relocated_manifests.items():
+        old_root = _native_manifest_root(source)
+        new_root = _native_manifest_root(destination)
+        for path in deleted:
+            if path != old_root and old_root not in path.parents:
+                continue
+            new_path = new_root / path.relative_to(old_root)
+            if new_path not in added:
+                relocated[path] = new_path
+    return relocated
+
+
+def _categorize_staged_entries(
+    entries: list[tuple[str, Path, Path | None]],
+    relocated_paths: dict[Path, Path],
+    relocated_deletions: dict[Path, Path],
+) -> _GitStatus:
+    status: _GitStatus = {"added": [], "deleted": [], "modified": [], "relocated_manifests": {}}
+    for operation, source, destination in entries:
+        if operation == "A" and source in relocated_paths:
+            status["modified"].append(source.as_posix())
+        elif operation == "D" and source in relocated_deletions:
+            status["deleted"].append(relocated_deletions[source].as_posix())
+        elif destination is not None and relocated_paths.get(destination) == source:
+            status["modified"].append(destination.as_posix())
+        elif destination is None:
+            if operation == "A":
+                status["added"].append(source.as_posix())
+            elif operation == "D":
+                status["deleted"].append(source.as_posix())
+            elif operation == "M":
+                status["modified"].append(source.as_posix())
+        else:
+            status["deleted"].append(source.as_posix())
+            status["added"].append(destination.as_posix())
+    return status
+
+
+def get_git_status() -> _GitStatus:
+    """Get staged file changes categorized by operation.
+
+    Returns:
+        Paths grouped by operation and paired native manifest relocations.
+    """
+    entries = _staged_name_status_entries()
+    relocated_manifests = _relocated_manifest_pairs(entries)
+    status = _categorize_staged_entries(
+        entries, _relocated_file_pairs(entries, relocated_manifests), _relocated_deletions(entries, relocated_manifests)
+    )
+    status["relocated_manifests"] = {
+        destination.as_posix(): source.as_posix() for destination, source in relocated_manifests.items()
+    }
     return status
 
 
@@ -240,7 +355,7 @@ def _native_component_path(source_root: Path, filepath: Path, operation: str) ->
     return {"component_type": component_type, "component_path": component_path}
 
 
-def _native_file_changes(manifests: list[NativeManifest], status: dict[str, list[str]]) -> dict[Path, ComponentChanges]:
+def _native_file_changes(manifests: list[NativeManifest], status: _GitStatus) -> dict[Path, ComponentChanges]:
     changes: dict[Path, ComponentChanges] = defaultdict(lambda: {"added": [], "deleted": [], "modified": []})
     manifest_paths = {manifest.path for manifest in manifests if manifest.kind == "plugin"}
     manifests_per_root: dict[Path, int] = defaultdict(int)
@@ -266,7 +381,57 @@ def _native_file_changes(manifests: list[NativeManifest], status: dict[str, list
             ):
                 continue
             changes[source_root][operation].append(_native_component_path(source_root, filepath, operation))
+    for source in status.get("relocated_manifests", {}).values():
+        source_path = Path(source)
+        source_root = source_path.parent if source_path.name.endswith(".plugin.json") else source_path.parent.parent
+        if manifests_for_source(manifests, source_root):
+            deleted_change = _native_component_path(source_root, source_path, "deleted")
+            if deleted_change not in changes[source_root]["deleted"]:
+                changes[source_root]["deleted"].append(deleted_change)
     return changes
+
+
+def _shared_target_version(
+    manifests: list[NativeManifest], changes: ComponentChanges, relocated_manifests: dict[Path, Path]
+) -> str | None:
+    source_versions: list[str] = []
+    baselines: list[tuple[str, tuple[int, int, int] | None]] = []
+    for manifest in manifests:
+        staged_data = _read_staged_json(manifest.path)
+        current_version = _extract_str_version(staged_data, "version") or "0.0.0"
+        source_versions.append(current_version)
+        baseline_path = (
+            manifest.path
+            if read_ref_json("HEAD", manifest.path) is not None
+            else relocated_manifests.get(manifest.path)
+        )
+        baseline_version = (
+            _extract_str_version(read_ref_json("HEAD", baseline_path), "version") if baseline_path else None
+        )
+        baselines.append((current_version, _parse_version_tuple(baseline_version) if baseline_version else None))
+    if not source_versions:
+        return None
+    source_version = max(source_versions, key=lambda version: _parse_version_tuple(version) or (0, 0, 0))
+    source_tuple = _parse_version_tuple(source_version)
+    baseline_tuples = [baseline for _, baseline in baselines if baseline is not None]
+    already_bumped = [
+        current_tuple is not None and baseline is not None and current_tuple > baseline
+        for current, baseline in baselines
+        if (current_tuple := _parse_version_tuple(current)) is not None
+    ]
+    has_existing_bump = any(already_bumped)
+    covered = [
+        current_tuple is not None
+        and (
+            (baseline is not None and current_tuple > baseline)
+            or (baseline is None and has_existing_bump and current == source_version)
+        )
+        for current, baseline in baselines
+        if (current_tuple := _parse_version_tuple(current)) is not None
+    ]
+    if source_tuple is not None and (not baseline_tuples or source_tuple > max(baseline_tuples) or all(covered)):
+        return source_version
+    return bump_version(source_version, _determine_bump_type(changes))
 
 
 def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
@@ -278,28 +443,40 @@ def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
     staged_paths = _staged_paths()
     manifests = [manifest for manifest in discover_manifests(root) if manifest.path in staged_paths]
     updated: dict[Path, str] = {}
-    for source_root, changes in _native_file_changes(manifests, get_git_status()).items():
-        versions: list[str] = []
+    status = get_git_status()
+    relocated_manifests = {
+        Path(destination): Path(source) for destination, source in status.get("relocated_manifests", {}).items()
+    }
+    for source_root, changes in _native_file_changes(manifests, status).items():
+        source_manifests = manifests_for_source(manifests, source_root)
+        target_version = _shared_target_version(source_manifests, changes, relocated_manifests)
+        if target_version is None:
+            continue
         changed = False
-        for manifest in manifests_for_source(manifests, source_root):
+        for manifest in source_manifests:
             original_content = manifest.path.read_bytes()
             unstaged_change = _has_unstaged_change(manifest.path)
             staged_data = _read_staged_json(manifest.path)
             if staged_data is None:
                 continue
             _write_json_lf(manifest.path, _format_json(staged_data))
-            manifest_updated, version = _update_plugin_manifest(
+            manifest_updated, _ = _update_plugin_manifest(
                 manifest.path, changes, sync_components=True, compare_to_head=True
             )
             generated_data = json.loads(manifest.path.read_text(encoding="utf-8"))
+            if generated_data.get("version") != target_version:
+                generated_data["version"] = target_version
+            generated_content = _format_json(generated_data)
+            manifest_updated = generated_content != _format_json(staged_data)
+            if manifest_updated:
+                _write_json_lf(manifest.path, generated_content)
             changed |= manifest_updated
-            versions.append(version)
             if manifest_updated and generated_data is not None:
                 _stage_json(manifest.path, generated_data)
             if unstaged_change or not manifest_updated:
                 manifest.path.write_bytes(original_content)
-        if changed and versions:
-            updated[source_root] = versions[0]
+        if changed:
+            updated[source_root] = target_version
     sync_native_marketplaces(root, bump=False, manifests=manifests, preserve_unstaged=True)
     return updated
 
