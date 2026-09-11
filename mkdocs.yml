@@ -25,6 +25,7 @@ theme:
 
 nav:
   - Home: index.md
+  - Setup: setup.md
   - Reference:
       - API: reference/api.md
       - CLI: reference/cli.md
