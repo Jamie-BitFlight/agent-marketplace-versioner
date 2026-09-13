@@ -65,8 +65,9 @@ pre-commit clean && pre-commit install --install-hooks
 
 The default `command: check` reads the consumer repository at `repository`
 (the workflow workspace by default). `base-ref` and `head-ref` default to the pull
-request's base and head, or to the pushed range on `push`; any other trigger passes
-both. `check` requires `base-ref`; `sync` with `marketplace: true` also uses both refs.
+request's base and head, or to the pushed range on `push`. Without a base, as on a
+new-branch push or `workflow_dispatch`, `check` compares against the default branch.
+`sync` with `marketplace: true` also uses both refs when a base exists.
 Pass `command: sync`, `repair`, or `reconcile` only when local mutation is intended.
 The action does not commit or push. It supports Linux and macOS Bash runners.
 

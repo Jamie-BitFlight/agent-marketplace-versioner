@@ -18,7 +18,7 @@ Reference lives in the versioner repository; fetch the page a step names.
 2. **Choose the approach.** Read "Choosing a versioning approach" in setup. Recommend Hook + CI or CI-only from the repo's evidence: who commits, and which hooks already exist. Done when the user confirms the approach.
 3. **Exclude manifests from formatters.** Apply "Exclude manifests from formatters and linters" in setup. Done when every formatter and linter config, and every pre-commit formatter hook, excludes all four manifest globs.
 4. **Pin one release.** Follow "Pin one release everywhere" in setup. Done when the hook `rev`, every Action `uses:`, and any CLI version name the same release commit.
-5. **Wire enforcement.** Add the hook, the `check` workflow, or both, per the chosen approach, from the index snippets. Done when the `check` workflow checks out with `fetch-depth: 0` and either triggers only on `pull_request` and `push` or passes `base-ref` and `head-ref`.
+5. **Wire enforcement.** Add the hook, the `check` workflow, or both, per the chosen approach, from the index snippets with the step 4 pin as the ref. Done when the `check` workflow checks out with `fetch-depth: 0`.
 6. **Wire the post-merge marketplace workflow.** Follow the approach's post-merge step in setup, including its skip condition. Done when the workflow publishes its result by push or by a PR holding every changed manifest, or the skip condition holds.
 7. **Verify.** Run the repo's hook set twice. Done when the second run passes and leaves no manifest modified.
 

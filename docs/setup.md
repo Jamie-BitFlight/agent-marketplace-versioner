@@ -51,8 +51,8 @@ The versioner manages Git-visible manifests at these paths and ignores every
 other path, including gitignored files:
 
 - **Plugin manifests** — `.<host>-plugin/plugin.json` (source root: the
-  directory holding `.<host>-plugin/`), `<name>.plugin.json` (source root: its
-  own directory), and `<name>-plugin.json`.
+  directory holding `.<host>-plugin/`), and `<name>.plugin.json` or
+  `<name>-plugin.json` (source root: its own directory).
 - **Marketplace catalogs** — `.<host>-plugin/marketplace.json` and
   `.agents/plugins/marketplace.json`.
 
@@ -128,12 +128,12 @@ unwanted; enforcement lives entirely at merge:
 
 1. A PR workflow runs the Action default `command: check` (checkout with
    `fetch-depth: 0`). It exits 1 when changed plugin content lacks a version
-   bump. `base-ref` and `head-ref` default correctly on `pull_request` and
-   `push` triggers; any other trigger passes both.
+   bump.
 2. The PR author — human or agent — clears the gate by running
    `agent-marketplace-versioner repair` locally and committing the bumps.
 3. The same post-merge workflow as Hook + CI step 2 reconciles catalog entries
-   and bumps catalog versions.
+   and bumps catalog versions. With no hook, it runs even when every catalog is
+   versionless.
 
 Choose Hook + CI when local plugin evaluation matters during development;
 choose CI-only when one enforcement point at merge beats per-machine setup.
@@ -143,7 +143,6 @@ choose CI-only when one enforcement point at merge beats per-machine setup.
 | Symptom | Fix |
 | --- | --- |
 | `check` exits 1 in CI | Changed plugin content is missing a version bump; run `repair`, commit the result |
-| `check` exits 2 with `base-ref is required for check` | The trigger supplies no pull request or push refs (for example `workflow_dispatch`); pass `base-ref` and `head-ref`, or run `check` only on `pull_request` and `push` |
 | `check` cannot find a revision | Shallow checkout; use `fetch-depth: 0` so both refs exist locally |
 | A manifest never bumps | Its path matches no [manifest layout](#manifest-layouts), or Git ignores it |
 | Hook runs an older release than its `rev` tag now names | Runners cache the revision first resolved for a moving tag; refresh with `prek clean && prek install --install-hooks` — see [Git hook](index.md#git-hook) |
