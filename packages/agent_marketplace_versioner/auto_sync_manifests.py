@@ -358,8 +358,19 @@ def _native_component_path(source_root: Path, filepath: Path, operation: str) ->
     return {"component_type": component_type, "component_path": component_path}
 
 
-def _native_file_changes(manifests: list[NativeManifest], status: _GitStatus) -> dict[Path, ComponentChanges]:
+def _native_file_changes(
+    manifests: list[NativeManifest], status: _GitStatus, head_tree: set[Path] | None = None
+) -> dict[Path, ComponentChanges]:
     changes: dict[Path, ComponentChanges] = defaultdict(lambda: {"added": [], "deleted": [], "modified": []})
+    head_tree = head_tree or set()
+    head_manifests = without_nested_manifests(
+        [
+            NativeManifest(path=path, kind=kind, version_key_path=None)
+            for path in head_tree
+            if (kind := manifest_kind(path))
+        ],
+        lambda path: read_ref_json("HEAD", path),
+    )
     manifest_paths = {manifest.path for manifest in manifests if manifest.kind == "plugin"}
     manifests_per_root: dict[Path, int] = defaultdict(int)
     for manifest in manifests:
@@ -384,6 +395,10 @@ def _native_file_changes(manifests: list[NativeManifest], status: _GitStatus) ->
             ):
                 continue
             changes[source_root][operation].append(_native_component_path(source_root, filepath, operation))
+            # The owner at HEAD also changed when a promoted fixture took this path from it.
+            former_root = source_for_path(head_manifests, filepath) if filepath in head_tree else None
+            if former_root is not None and former_root != source_root and manifests_for_source(manifests, former_root):
+                changes[former_root][operation].append(_native_component_path(former_root, filepath, operation))
     for source in status.get("relocated_manifests", {}).values():
         source_path = Path(source)
         source_root = _native_manifest_root(source_path)
@@ -437,6 +452,14 @@ def _shared_target_version(
     return bump_version(source_version, _determine_bump_type(changes))
 
 
+def _head_tree() -> set[Path]:
+    try:
+        listing = _run_git_bytes(["ls-tree", "-r", "--name-only", "-z", "HEAD"])
+    except RuntimeError:
+        return set()  # no commit yet, so no path had an earlier owner
+    return {Path(item.decode("utf-8", errors="surrogateescape")) for item in listing.split(b"\0") if item}
+
+
 def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
     """Apply staged content changes to every affected native plugin manifest.
 
@@ -452,7 +475,7 @@ def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
     relocated_manifests = {
         Path(destination): Path(source) for destination, source in status.get("relocated_manifests", {}).items()
     }
-    for source_root, changes in _native_file_changes(manifests, status).items():
+    for source_root, changes in _native_file_changes(manifests, status, _head_tree()).items():
         source_manifests = manifests_for_source(manifests, source_root)
         target_version = _shared_target_version(source_manifests, changes, relocated_manifests)
         if target_version is None:
