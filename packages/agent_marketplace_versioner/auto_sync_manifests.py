@@ -46,7 +46,6 @@ if isinstance(sys.stderr, TextIOWrapper):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from collections import defaultdict
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal, TypedDict, TypeGuard
 
@@ -506,7 +505,7 @@ def _marketplace_local_entries(
     return entries
 
 
-def _marketplace_entry_source(entry: Mapping[str, object]) -> str | None:
+def _marketplace_entry_source(entry: _MarketplacePluginEntry) -> str | None:
     source = entry.get("source")
     if isinstance(source, str):
         return source if source.startswith(".") else None
@@ -525,33 +524,56 @@ def _marketplace_local_source_path(source: str, marketplace: NativeManifest, roo
         return None
 
 
-def _with_membership_changes_since(
-    ref: str | None,
-    data: _MarketplaceJsonData,
-    marketplace: NativeManifest,
-    root: Path,
-    *,
-    deleted: list[Path],
-    added: list[Path],
-) -> tuple[list[Path], list[Path]]:
-    """Extend *deleted* and *added* with local catalog sources removed or added since *ref*.
+def _catalog_at_ref(root: Path, ref: str, path: Path) -> object | None:
+    """Parse the catalog at *path* in *ref* inside the repository at *root*.
 
     Returns:
-        The extended lists; unchanged when *ref* is None or holds no readable catalog.
+        The parsed JSON, or None when *ref* has no file at *path*.
+
+    Raises:
+        RuntimeError: *ref* names no commit in *root*, or the catalog at *ref* is not valid JSON.
     """
-    base = read_ref_json(ref, marketplace.path) if ref is not None else None
-    plugins = base.get("plugins") if _is_str_dict(base) else None
+    if _GIT_PATH is None:
+        raise RuntimeError("git executable not found in PATH")
+    git = [_GIT_PATH, "-C", str(root)]
+    verify = [*git, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}"]
+    if subprocess.run(verify, check=False, capture_output=True).returncode != 0:
+        raise RuntimeError(f"bad revision '{ref}'")
+    result = subprocess.run([*git, "show", f"{ref}:{path.as_posix()}"], check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"cannot parse {path.as_posix()} at {ref}") from error
+
+
+def _catalog_names(data: object) -> set[str]:
+    plugins = data.get("plugins") if _is_str_dict(data) else None
     if not isinstance(plugins, list):
-        return deleted, added
-    base_sources = {
-        path
-        for entry in plugins
-        if _is_str_dict(entry)
-        and (source := _marketplace_entry_source(entry)) is not None
-        and (path := _marketplace_local_source_path(source, marketplace, root)) is not None
-    }
-    head_sources = set(_marketplace_local_entries(data, marketplace, root))
-    return [*deleted, *sorted(base_sources - head_sources)], [*added, *sorted(head_sources - base_sources)]
+        return set()
+    return {name for entry in plugins if _is_str_dict(entry) and isinstance(name := entry.get("name"), str)}
+
+
+def _membership_changes_between_refs(
+    root: Path, path: Path, base_ref: str | None, head_ref: str
+) -> tuple[set[str], set[str]]:
+    """Return plugin names removed from and added to the catalog between the refs.
+
+    A moved plugin keeps its name, so the source diff reports it instead. A catalog
+    absent at either ref yields no membership change.
+
+    Returns:
+        ``(removed, added)`` plugin names.
+    """
+    if base_ref is None:
+        return set(), set()
+    base = _catalog_at_ref(root, base_ref, path)
+    head = _catalog_at_ref(root, head_ref, path)
+    if base is None or head is None:
+        return set(), set()
+    base_names, head_names = _catalog_names(base), _catalog_names(head)
+    return base_names - head_names, head_names - base_names
 
 
 def _bump_native_marketplace_version(
@@ -639,10 +661,9 @@ def _sync_native_marketplace(
         if source in local_plugins
         and entry["name"] != _native_plugin_name(local_plugins[source], root, staged=staged_names)
     }
-    plugins = data.get("plugins", [])
     data["plugins"] = [
         entry
-        for entry in plugins
+        for entry in data.get("plugins", [])
         if not (
             (source := _marketplace_entry_source(entry)) is not None
             and _marketplace_local_source_path(source, marketplace, root) in deleted
@@ -657,8 +678,8 @@ def _sync_native_marketplace(
         })
     for source, name in renamed.items():
         local_entries[source]["name"] = name
-    deleted, added = _with_membership_changes_since(base_ref, data, marketplace, root, deleted=deleted, added=added)
-    changed = bool(deleted or added or renamed) or any(
+    removed, introduced = _membership_changes_between_refs(root, marketplace.path, base_ref, head_ref)
+    changed = bool(deleted or added or renamed or removed or introduced) or any(
         _source_differs_between_refs(root, source, marketplace.path, base_ref, head_ref) for source in local_plugins
     )
     if not changed and (
@@ -671,8 +692,9 @@ def _sync_native_marketplace(
         return changed
     if dry_run:
         return True
-    bump_type: Literal["major", "minor", "patch"] = "major" if deleted else "minor" if added else "patch"
-    _bump_native_marketplace_version(data, marketplace, bump_type)
+    _bump_native_marketplace_version(
+        data, marketplace, "major" if deleted or removed else "minor" if added or introduced else "patch"
+    )
     _write_json_lf(marketplace_path, _format_json(data))
     return True
 

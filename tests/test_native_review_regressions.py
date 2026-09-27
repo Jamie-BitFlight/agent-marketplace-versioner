@@ -377,33 +377,100 @@ def test_marketplace_sync_fails_for_an_unavailable_revision(tmp_path: Path, monk
         sync_native_marketplaces(base_ref="missing", head_ref="HEAD")
 
 
+CATALOG = Path(".claude-plugin/marketplace.json")
+REMOTE = {"source": "github", "repo": "example/remote"}
+
+
+def commit_catalog(repo: Path, entries: dict[str, object]) -> str:
+    """Commit a catalog of name → source; each string source gets a plugin manifest."""
+    shutil.rmtree(repo / "plugins", ignore_errors=True)
+    for name, source in entries.items():
+        if isinstance(source, str):
+            write_json(repo / source / ".claude-plugin/plugin.json", {"name": name, "version": "1.0.0"})
+    plugins = [{"name": name, "source": source} for name, source in entries.items()]
+    write_json(repo / CATALOG, {"metadata": {"version": "1.0.0"}, "plugins": plugins})
+    git(repo, "add", "-A")
+    git(repo, "commit", "--quiet", "-m", "+".join(entries))
+    return git(repo, "rev-parse", "HEAD").strip()
+
+
+def catalog_version(repo: Path) -> str:
+    return json.loads((repo / CATALOG).read_text())["metadata"]["version"]
+
+
 @pytest.mark.parametrize(
-    ("base_plugins", "head_plugins", "expected"),
-    [(["one", "two"], ["one"], "2.0.0"), (["one"], ["one", "two"], "1.1.0")],
+    ("base_entries", "head_entries", "expected"),
+    [
+        pytest.param({"one": "./plugins/one", "two": "./plugins/two"}, {"one": "./plugins/one"}, "2.0.0", id="remove"),
+        pytest.param({"one": "./plugins/one"}, {"one": "./plugins/one", "two": "./plugins/two"}, "1.1.0", id="add"),
+        pytest.param({"one": "./plugins/one"}, {"one": "./plugins/moved/one"}, "1.0.1", id="move"),
+        pytest.param({"one": "./plugins/one", "remote": REMOTE}, {"one": "./plugins/one"}, "2.0.0", id="remote"),
+    ],
 )
 def test_marketplace_sync_bumps_for_membership_change_between_refs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, base_plugins: list[str], head_plugins: list[str], expected: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    base_entries: dict[str, object],
+    head_entries: dict[str, object],
+    expected: str,
 ) -> None:
     initialize(tmp_path)
-    marketplace = tmp_path / ".claude-plugin/marketplace.json"
-
-    def commit(names: list[str]) -> str:
-        for name in {"one", "two"} - set(names):
-            shutil.rmtree(tmp_path / "plugins" / name, ignore_errors=True)
-        for name in names:
-            write_json(tmp_path / f"plugins/{name}/.claude-plugin/plugin.json", {"name": name, "version": "1.0.0"})
-        entries = [{"name": name, "source": f"./plugins/{name}"} for name in names]
-        write_json(marketplace, {"metadata": {"version": "1.0.0"}, "plugins": entries})
-        git(tmp_path, "add", "-A")
-        git(tmp_path, "commit", "--quiet", "-m", "+".join(names))
-        return git(tmp_path, "rev-parse", "HEAD").strip()
-
-    base = commit(base_plugins)
-    head = commit(head_plugins)
+    base = commit_catalog(tmp_path, base_entries)
+    head = commit_catalog(tmp_path, head_entries)
     monkeypatch.chdir(tmp_path)
 
-    assert sync_native_marketplaces(base_ref=base, head_ref=head) == [Path(".claude-plugin/marketplace.json")]
-    assert json.loads(marketplace.read_text())["metadata"]["version"] == expected
+    assert sync_native_marketplaces(base_ref=base, head_ref=head) == [CATALOG]
+    assert catalog_version(tmp_path) == expected
+
+
+def test_marketplace_membership_reads_head_ref_not_worktree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    base = commit_catalog(tmp_path, {"one": "./plugins/one", "two": "./plugins/two"})
+    head = commit_catalog(tmp_path, {"one": "./plugins/one"})
+    git(tmp_path, "checkout", "--quiet", base)
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_native_marketplaces(base_ref=base, head_ref=head) == [CATALOG]
+    assert catalog_version(tmp_path) == "2.0.0"
+
+
+def test_marketplace_membership_runs_git_inside_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    initialize(repo)
+    base = commit_catalog(repo, {"one": "./plugins/one", "two": "./plugins/two"})
+    head = commit_catalog(repo, {"one": "./plugins/one"})
+    (tmp_path / "outside").mkdir()
+    monkeypatch.chdir(tmp_path / "outside")
+
+    assert sync_native_marketplaces(repo, base_ref=base, head_ref=head) == [CATALOG]
+    assert catalog_version(repo) == "2.0.0"
+
+
+def test_marketplace_membership_needs_a_base_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    commit_catalog(tmp_path, {"one": "./plugins/one", "two": "./plugins/two"})
+    commit_catalog(tmp_path, {"one": "./plugins/one"})
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_native_marketplaces() == []
+    assert catalog_version(tmp_path) == "1.0.0"
+
+
+def test_marketplace_membership_fails_for_an_unreadable_base_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    (tmp_path / CATALOG).parent.mkdir(parents=True)
+    (tmp_path / CATALOG).write_text("{")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "--quiet", "-m", "broken")
+    base = git(tmp_path, "rev-parse", "HEAD").strip()
+    head = commit_catalog(tmp_path, {"one": "./plugins/one"})
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(RuntimeError, match="cannot parse"):
+        sync_native_marketplaces(base_ref=base, head_ref=head)
 
 
 def test_staged_sync_bumps_existing_manifest_when_adding_a_harness(

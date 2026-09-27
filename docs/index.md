@@ -89,10 +89,11 @@ optional local cache-busting:
 ```
 
 It reconciles catalog entries and bumps existing marketplace versions, preserving
-versionless catalogs. With a base revision, a local plugin removed from the catalog
-since the base bumps the major version, an added one bumps the minor version, and
-other plugin source changes bump the patch version. Add a commit-and-push step to
-publish the result.
+versionless catalogs. With a base revision, catalog entries match by plugin `name`
+between the base and head revisions, whatever their source type. A name removed
+since the base bumps the major version, and a new name bumps the minor version.
+A plugin that moves but keeps its name, and any other plugin source change, bumps
+the patch version. Add a commit-and-push step to publish the result.
 
 The `v1` tag advances only through compatible v1 releases. Pin an immutable
 commit SHA instead when your supply-chain policy requires it. The action installs
