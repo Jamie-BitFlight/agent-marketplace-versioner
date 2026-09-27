@@ -13,7 +13,7 @@ The distributable hook and composite GitHub Action invoke the same CLI.
 | `sync --marketplace` | Reconcile and version native marketplace catalogs. |
 | `repair` | Apply manifest repairs and report results as JSON. |
 | `reconcile --dry-run` | Preview full reconciliation; exits 1 when changes are needed. |
-| `reconcile --dry-run --staged` | Same preview, ignoring untracked files; tracked files are read from the working tree, which the hook runner stashes to match the index. |
+| `reconcile --dry-run --staged` | Same preview, read from the Git index: untracked files and unstaged edits do not count. |
 | `reconcile` | Repair explicit native component arrays and catalog membership; catalog versions are unchanged. |
 
 Both revisions must exist locally for `check`. A shallow checkout may need

@@ -1774,7 +1774,10 @@ def _is_skill_user_invocable(skill_md_path: Path) -> bool:
         text = skill_md_path.read_text(encoding="utf-8")
     except OSError:
         return False
+    return _is_frontmatter_user_invocable(text)
 
+
+def _is_frontmatter_user_invocable(text: str) -> bool:
     # Extract frontmatter between first two --- lines
     if not text.startswith("---"):
         return True  # No frontmatter = default (invocable)
@@ -1839,6 +1842,44 @@ def _discover_invocable_skills(plugin_dir: Path) -> list[str]:
                     found.append(f"./skills/{item.name}/{nested.name}")
 
     return found
+
+
+def _staged_components(source: Path, index: set[Path]) -> dict[str, list[str]]:
+    """Discover the same components as the filesystem scanners, from Git index paths and blobs.
+
+    Returns:
+        Component references for the ``skills``, ``agents``, and ``commands`` arrays.
+    """
+    skills: list[str] = []
+    agents: list[str] = []
+    commands: list[str] = []
+    invocable: list[str] = []
+
+    def is_invocable(path: Path) -> bool:
+        return _is_frontmatter_user_invocable(
+            _run_git_bytes(["show", f":{path.as_posix()}"]).decode("utf-8", errors="replace")
+        )
+
+    for path in sorted(index):
+        if source not in path.parents:
+            continue
+        parts = path.relative_to(source).parts
+        if any(part.startswith(".") for part in parts):
+            continue
+        match parts:
+            case ("skills", "SKILL.md"):
+                skills.append("./skills/SKILL.md")
+            case ("skills", name, "SKILL.md"):
+                skills.append(f"./skills/{name}")
+                if is_invocable(path):
+                    invocable.append(f"./skills/{name}")
+            case ("skills", group, name, "SKILL.md") if is_invocable(path):
+                invocable.append(f"./skills/{group}/{name}")
+            case ("agents", name) if name.endswith(".md"):
+                agents.append(f"./agents/{name}")
+            case ("commands", name) if name.endswith(".md"):
+                commands.append(f"./commands/{name}")
+    return {"skills": skills, "agents": agents, "commands": commands + invocable}
 
 
 def _normalize_skill_ref(ref: str) -> str:
@@ -2305,39 +2346,35 @@ def reconcile(*, dry_run: bool) -> int:
 def reconcile_native_manifests(*, dry_run: bool, staged: bool = False) -> int:
     """Reconcile native component arrays and catalog membership.
 
-    With *staged*, untracked files are ignored, so only content in the Git
-    index counts. Pre-commit runners stash unstaged edits to tracked files
-    before a hook runs, so the working tree then matches the index.
+    With *staged*, manifests, catalogs, and components are read from the Git
+    index, so untracked files and unstaged edits do not count.
 
     Returns:
         One for detected drift in dry-run mode, otherwise zero.
     """
     manifests = discover_manifests()
-    tracked: set[Path] | None = None
+    index: set[Path] | None = None
     if staged:
-        tracked = _staged_paths()
-        manifests = [manifest for manifest in manifests if manifest.path in tracked]
+        index = _staged_paths()
+        manifests = [manifest for manifest in manifests if manifest.path in index]
     drift = False
     for manifest in manifests:
         if manifest.kind != "plugin":
             continue
         source = manifest_root(manifest)
-        data = json.loads(manifest.path.read_text(encoding="utf-8"))
+        data = json.loads(
+            _run_git_bytes(["show", f":{manifest.path.as_posix()}"]) if staged else manifest.path.read_bytes()
+        )
         changed = False
-        components = {
-            "skills": _discover_skills(source),
-            "agents": _discover_agents(source),
-            "commands": _discover_commands(source) + _discover_invocable_skills(source),
-        }
-        if tracked is not None:
-            components = {
-                field: [
-                    item
-                    for item in items
-                    if (path := source / item.removeprefix("./")) in tracked or path / "SKILL.md" in tracked
-                ]
-                for field, items in components.items()
+        components = (
+            _staged_components(source, index)
+            if index is not None
+            else {
+                "skills": _discover_skills(source),
+                "agents": _discover_agents(source),
+                "commands": _discover_commands(source) + _discover_invocable_skills(source),
             }
+        )
         for field, items in components.items():
             if isinstance(data.get(field), list):
                 changed |= _reconcile_mode_b(data, field, items, source.as_posix(), dry_run=dry_run)
@@ -2345,7 +2382,7 @@ def reconcile_native_manifests(*, dry_run: bool, staged: bool = False) -> int:
             data["version"] = bump_version(data.get("version", "0.0.0"), "minor")
             _write_json_lf(manifest.path, _format_json(data))
         drift |= changed
-    drift |= bool(sync_native_marketplaces(bump=False, dry_run=dry_run, manifests=manifests))
+    drift |= bool(sync_native_marketplaces(bump=False, dry_run=dry_run, manifests=manifests, preserve_unstaged=staged))
     print("Drift detected." if drift else "No drift detected — all manifests match filesystem.")
     return int(drift and dry_run)
 

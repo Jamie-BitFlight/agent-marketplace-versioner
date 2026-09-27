@@ -62,7 +62,9 @@ def repair() -> None:
 def reconcile(
     dry_run: bool = typer.Option(False, "--dry-run", help="Report manifest drift without changing files."),
     staged: bool = typer.Option(
-        False, "--staged", help="Ignore untracked files; tracked files are read from the working tree."
+        False,
+        "--staged",
+        help="Read manifests and components from the Git index; ignore untracked files and unstaged edits.",
     ),
 ) -> None:
     """Reconcile native component arrays and marketplace membership."""
