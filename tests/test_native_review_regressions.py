@@ -781,3 +781,58 @@ def test_staged_sync_ignores_an_untracked_enclosing_manifest(tmp_path: Path, mon
     monkeypatch.chdir(tmp_path)
 
     assert sync_staged_manifests(tmp_path) == {Path("suite/inner"): "1.0.1"}
+
+
+def promote_fixture_with_edit(repo: Path) -> None:
+    catalog = repo / ".claude-plugin/marketplace.json"
+    write_json(catalog, {"version": "1.0.0", "plugins": [{"name": "x", "source": "./plugins/x"}]})
+    commit_plugin_with_fixture(repo)
+    data = json.loads(catalog.read_text())
+    data["plugins"].append({"name": "fixture", "source": "./plugins/x/evals/files/hidden-styles"})
+    write_json(catalog, data)
+    (repo / FIXTURE.parent.parent / "README.md").write_text("after\n")
+    git(repo, "add", ".")
+
+
+def test_staged_sync_bumps_the_former_owner_when_a_fixture_is_promoted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    promote_fixture_with_edit(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path("plugins/x"): "1.0.1", FIXTURE.parent.parent: "0.1.1"}
+
+
+def test_check_requires_the_former_owner_bump_when_a_fixture_is_promoted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    promote_fixture_with_edit(tmp_path)
+    base = git(tmp_path, "rev-parse", "HEAD").strip()
+    write_json(tmp_path / FIXTURE, {"name": "fixture", "version": "0.1.1"})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "promote fixture")
+    monkeypatch.chdir(tmp_path)
+
+    assert check_native_version_bumps(base) == [PLUGIN]
+
+
+def test_check_does_not_require_the_enclosing_bump_for_a_new_declared_nested_plugin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog = tmp_path / ".claude-plugin/marketplace.json"
+    write_json(catalog, {"version": "1.0.0", "plugins": [{"name": "x", "source": "./plugins/x"}]})
+    initialize(tmp_path)
+    write_json(tmp_path / PLUGIN, {"name": "x", "version": "1.0.0"})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    base = git(tmp_path, "rev-parse", "HEAD").strip()
+    data = json.loads(catalog.read_text())
+    data["plugins"].append({"name": "sub", "source": "./plugins/x/sub"})
+    write_json(catalog, data)
+    write_json(tmp_path / "plugins/x/sub/.claude-plugin/plugin.json", {"name": "sub", "version": "0.1.0"})
+    (tmp_path / "plugins/x/sub/README.md").write_text("new\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "add sub")
+    monkeypatch.chdir(tmp_path)
+
+    assert check_native_version_bumps(base) == []

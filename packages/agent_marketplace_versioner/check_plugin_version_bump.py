@@ -158,6 +158,19 @@ def _moved_manifests_missing_bumps(
     return missing
 
 
+def _changed_roots(revisions: str, kept_base: list[NativeManifest], kept_head: list[NativeManifest]) -> set[Path]:
+    # A path's owner on each side counts, so promoting a fixture still requires its former owner's bump.
+    changed_paths = _git_paths(["diff", "--name-only", "-z", revisions])
+    added = set(_git_paths(["diff", "--name-only", "--no-renames", "--diff-filter=A", "-z", revisions]))
+    deleted = set(_git_paths(["diff", "--name-only", "--no-renames", "--diff-filter=D", "-z", revisions]))
+    return {
+        source_root
+        for manifests, absent in ((kept_base, added), (kept_head, deleted))
+        for path in changed_paths
+        if path not in absent and (source_root := source_for_path(manifests, path)) is not None
+    }
+
+
 def check_native_version_bumps(base_ref: str, head_ref: str = "HEAD") -> list[Path]:
     """Return changed native manifests whose declared version did not increase.
 
@@ -173,20 +186,15 @@ def check_native_version_bumps(base_ref: str, head_ref: str = "HEAD") -> list[Pa
     all_head = _native_manifests_at_ref(head)
     # A manifest stays in scope when either ref treats it as a manifest, so a head that adds an
     # enclosing plugin cannot waive the bump an existing nested plugin owes.
-    kept = {
-        manifest.path
+    kept_base, kept_head = (
+        without_nested_manifests(manifests, lambda path, ref=ref: read_ref_json(ref, path))
         for ref, manifests in ((base, all_base), (head, all_head))
-        for manifest in without_nested_manifests(manifests, lambda path, ref=ref: read_ref_json(ref, path))
-    }
+    )
+    kept = {manifest.path for manifest in [*kept_base, *kept_head]}
     base_manifests = {manifest.path: manifest for manifest in all_base if manifest.path in kept}
     head_manifests = {manifest.path: manifest for manifest in all_head if manifest.path in kept}
     manifests_by_path = base_manifests | head_manifests
-    changed_paths = _git_paths(["diff", "--name-only", "-z", f"{base}...{head}"])
-    changed_roots = {
-        source_root
-        for path in changed_paths
-        if (source_root := source_for_path(list(manifests_by_path.values()), path)) is not None
-    }
+    changed_roots = _changed_roots(f"{base}...{head}", kept_base, kept_head)
     missing: list[Path] = []
     for manifest in sorted(manifests_by_path.values(), key=lambda manifest: manifest.path.as_posix()):
         if manifest.path not in base_manifests or manifest.path not in head_manifests:
