@@ -47,7 +47,7 @@ if isinstance(sys.stderr, TextIOWrapper):
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Literal, TypedDict, TypeGuard
+from typing import Literal, NamedTuple, TypedDict, TypeGuard
 
 from agent_marketplace_versioner.native_manifests import (
     NativeManifest,
@@ -517,6 +517,76 @@ def _marketplace_local_source_path(source: str, marketplace: NativeManifest, roo
         return None
 
 
+def _catalog_at_ref(root: Path, ref: str, path: Path) -> object | None:
+    """Parse the catalog at *path* in *ref* inside the repository at *root*.
+
+    Returns:
+        The parsed JSON, or None when *ref* has no file at *path*.
+
+    Raises:
+        RuntimeError: *ref* names no commit in *root*, or the catalog at *ref* is not valid JSON.
+    """
+    if _GIT_PATH is None:
+        raise RuntimeError("git executable not found in PATH")
+    git = [_GIT_PATH, "-C", str(root)]
+    verify = [*git, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}"]
+    if subprocess.run(verify, check=False, capture_output=True).returncode != 0:
+        raise RuntimeError(f"bad revision '{ref}'")
+    result = subprocess.run([*git, "show", f"{ref}:{path.as_posix()}"], check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"cannot parse {path.as_posix()} at {ref}") from error
+
+
+def _catalog_entries(data: object) -> dict[str, dict[str, object]]:
+    plugins = data.get("plugins") if _is_str_dict(data) else None
+    if not isinstance(plugins, list):
+        return {}
+    return {name: entry for entry in plugins if _is_str_dict(entry) and isinstance(name := entry.get("name"), str)}
+
+
+def _catalog_version(data: object) -> tuple[int, int, int] | None:
+    # Each catalog declares its own version field: top-level first, as in discovery.
+    return extract_version_from_json(data, ["version"]) or extract_version_from_json(data, ["metadata", "version"])
+
+
+class _CatalogRefChanges(NamedTuple):
+    removed: set[str]
+    added: set[str]
+    edited: set[str]
+    base_version: tuple[int, int, int] | None
+
+
+def _catalog_changes_between_refs(
+    root: Path, marketplace: NativeManifest, base_ref: str | None, head_ref: str
+) -> _CatalogRefChanges:
+    """Compare the catalog at *base_ref* with the catalog at *head_ref*.
+
+    Entries match by name, so a moved plugin is edited, not removed and added. A
+    catalog absent at either ref yields no change.
+
+    Returns:
+        Plugin names removed, added, and edited, and the catalog version at *base_ref*.
+    """
+    unchanged = _CatalogRefChanges(set(), set(), set(), base_version=None)
+    if base_ref is None:
+        return unchanged
+    base = _catalog_at_ref(root, base_ref, marketplace.path)
+    head = _catalog_at_ref(root, head_ref, marketplace.path)
+    if base is None or head is None:
+        return unchanged
+    base_entries, head_entries = _catalog_entries(base), _catalog_entries(head)
+    return _CatalogRefChanges(
+        removed=base_entries.keys() - head_entries.keys(),
+        added=head_entries.keys() - base_entries.keys(),
+        edited={name for name in base_entries.keys() & head_entries.keys() if base_entries[name] != head_entries[name]},
+        base_version=_catalog_version(base),
+    )
+
+
 def _bump_native_marketplace_version(
     data: _MarketplaceJsonData, marketplace: NativeManifest, bump_type: Literal["major", "minor", "patch"]
 ) -> None:
@@ -602,10 +672,9 @@ def _sync_native_marketplace(
         if source in local_plugins
         and entry["name"] != _native_plugin_name(local_plugins[source], root, staged=staged_names)
     }
-    plugins = data.get("plugins", [])
     data["plugins"] = [
         entry
-        for entry in plugins
+        for entry in data.get("plugins", [])
         if not (
             (source := marketplace_entry_source(entry)) is not None
             and _marketplace_local_source_path(source, marketplace, root) in deleted
@@ -620,21 +689,31 @@ def _sync_native_marketplace(
         })
     for source, name in renamed.items():
         local_entries[source]["name"] = name
-    changed = bool(deleted or added or renamed) or any(
+    ref_changes = _catalog_changes_between_refs(root, marketplace, base_ref, head_ref)
+    changed = bool(
+        deleted or added or renamed or ref_changes.removed or ref_changes.added or ref_changes.edited
+    ) or any(
         _source_differs_between_refs(root, source, marketplace.path, base_ref, head_ref) for source in local_plugins
     )
     if not changed and (
         not bump or marketplace.version_key_path is None or not _marketplace_differs_from_head(marketplace.path)
     ):
         return False
-    if not bump or marketplace.version_key_path is None or manual_version:
+    # The working catalog already carries a bump above base_ref, e.g. one committed at head_ref.
+    worktree_bumped = (
+        ref_changes.base_version is not None and (_catalog_version(data) or (0, 0, 0)) > ref_changes.base_version
+    )
+    if not bump or marketplace.version_key_path is None or manual_version or worktree_bumped:
         if changed and not dry_run:
             _write_json_lf(marketplace_path, _format_json(data))
         return changed
     if dry_run:
         return True
-    bump_type: Literal["major", "minor", "patch"] = "major" if deleted else "minor" if added else "patch"
-    _bump_native_marketplace_version(data, marketplace, bump_type)
+    _bump_native_marketplace_version(
+        data,
+        marketplace,
+        "major" if deleted or ref_changes.removed else "minor" if added or ref_changes.added else "patch",
+    )
     _write_json_lf(marketplace_path, _format_json(data))
     return True
 
@@ -686,7 +765,7 @@ def sync_native_marketplaces(
                     _stage_json(marketplace.path, json.loads(marketplace_path.read_text(encoding="utf-8")))
                 marketplace_path.write_bytes(original_content)
             elif updated and not dry_run and updated[-1] == marketplace.path:
-                _git_stage_file(marketplace.path.as_posix())
+                _git_stage_file(marketplace.path.as_posix(), root)
     return updated
 
 
@@ -1549,15 +1628,16 @@ def _process_file_changes(status: dict[str, list[str]]) -> tuple[dict[str, Compo
     return plugin_component_changes, marketplace_changes
 
 
-def _git_stage_file(filepath: str) -> None:
+def _git_stage_file(filepath: str, root: Path = Path()) -> None:
     """Stage a file with git add, logging warnings on failure.
 
     Args:
-        filepath: Relative path to stage.
+        filepath: Path to stage, relative to *root*.
+        root: Repository directory to run git in.
     """
     if not _GIT_PATH:
         return
-    result = subprocess.run([_GIT_PATH, "add", filepath], capture_output=True, text=True, check=False)
+    result = subprocess.run([_GIT_PATH, "-C", str(root), "add", filepath], capture_output=True, text=True, check=False)
     if result.returncode != 0:
         sys.stderr.write(f"Warning: git add {filepath} failed: {result.stderr.strip()}\n")
 
