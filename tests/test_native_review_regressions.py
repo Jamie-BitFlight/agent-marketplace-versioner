@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 from agent_marketplace_versioner.auto_sync_manifests import sync_native_marketplaces, sync_staged_manifests
 from agent_marketplace_versioner.check_plugin_version_bump import check_native_version_bumps
 from agent_marketplace_versioner.cli import app
+from agent_marketplace_versioner.native_manifests import discover_manifests
 
 
 def initialize(repo: Path) -> None:
@@ -535,3 +536,90 @@ def test_reconcile_leaves_a_nested_fixture_manifest_alone(tmp_path: Path, monkey
     monkeypatch.chdir(tmp_path)
 
     assert CliRunner().invoke(app, ["reconcile", "--dry-run"]).exit_code == 0
+
+
+def test_marketplace_sync_leaves_a_fixture_catalog_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    commit_plugin_with_fixture(tmp_path)
+    catalog = tmp_path / FIXTURE.parent.parent / ".claude-plugin/marketplace.json"
+    write_json(catalog, {"version": "1.0.0", "plugins": [{"name": "fixture", "source": "./"}]})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "fixture catalog")
+    before = catalog.read_text()
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_native_marketplaces() == []
+    assert CliRunner().invoke(app, ["reconcile"]).exit_code == 0
+    assert catalog.read_text() == before
+
+
+def test_a_catalog_declared_nested_plugin_stays_a_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    catalog = tmp_path / ".claude-plugin/marketplace.json"
+    write_json(
+        catalog,
+        {
+            "version": "1.0.0",
+            "plugins": [
+                {"name": "suite", "source": "./plugins/suite"},
+                {"name": "sub", "source": "./plugins/suite/sub"},
+            ],
+        },
+    )
+    write_json(tmp_path / "plugins/suite/.claude-plugin/plugin.json", {"name": "suite", "version": "1.0.0"})
+    sub = Path("plugins/suite/sub/.claude-plugin/plugin.json")
+    write_json(tmp_path / sub, {"name": "sub", "version": "1.0.0"})
+    (tmp_path / "plugins/suite/sub/README.md").write_text("before\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    before = catalog.read_text()
+    (tmp_path / "plugins/suite/sub/README.md").write_text("after\n")
+    git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path("plugins/suite/sub"): "1.0.1"}
+    assert sync_native_marketplaces() == []
+    assert catalog.read_text() == before
+
+
+def test_fixtures_under_a_repository_root_plugin_still_count_as_manifests(tmp_path: Path) -> None:
+    initialize(tmp_path)
+    write_json(tmp_path / ".claude-plugin/plugin.json", {"name": "root", "version": "1.0.0"})
+    fixture = Path("evals/files/case/.claude-plugin/plugin.json")
+    write_json(tmp_path / fixture, {"name": "fixture", "version": "0.1.0"})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+
+    assert [manifest.path for manifest in discover_manifests(tmp_path)] == [Path(".claude-plugin/plugin.json"), fixture]
+
+
+def test_check_keeps_requiring_a_nested_plugin_bump_when_head_adds_an_enclosing_plugin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    inner = Path("suite/inner/.claude-plugin/plugin.json")
+    write_json(tmp_path / inner, {"name": "inner", "version": "1.0.0"})
+    (tmp_path / "suite/inner/README.md").write_text("before\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    base = git(tmp_path, "rev-parse", "HEAD").strip()
+    write_json(tmp_path / "suite/.claude-plugin/plugin.json", {"name": "suite", "version": "1.0.0"})
+    (tmp_path / "suite/inner/README.md").write_text("after\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "wrap in suite")
+    monkeypatch.chdir(tmp_path)
+
+    assert check_native_version_bumps(base) == [inner]
+
+
+def test_staged_sync_ignores_an_untracked_enclosing_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    write_json(tmp_path / "suite/inner/.claude-plugin/plugin.json", {"name": "inner", "version": "1.0.0"})
+    (tmp_path / "suite/inner/README.md").write_text("before\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    write_json(tmp_path / "suite/.claude-plugin/plugin.json", {"name": "suite", "version": "1.0.0"})
+    (tmp_path / "suite/inner/README.md").write_text("after\n")
+    git(tmp_path, "add", "suite/inner/README.md")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path("suite/inner"): "1.0.1"}

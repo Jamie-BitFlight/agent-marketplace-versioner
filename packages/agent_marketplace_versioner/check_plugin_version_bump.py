@@ -61,7 +61,7 @@ from agent_marketplace_versioner.native_manifests import (
     manifest_kind,
     manifest_root,
     source_for_path,
-    without_nested_plugins,
+    without_nested_manifests,
 )
 
 _RENAME_STATUS_FIELDS = 3
@@ -111,7 +111,7 @@ def _native_manifests_at_ref(ref: str) -> list[NativeManifest]:
                 version_key_path=("metadata", "version") if kind == "marketplace" else ("version",),
             )
         )
-    return without_nested_plugins(manifests)
+    return manifests
 
 
 def _plugin_identity_at_ref(ref: str, manifest: NativeManifest) -> str | None:
@@ -169,8 +169,17 @@ def check_native_version_bumps(base_ref: str, head_ref: str = "HEAD") -> list[Pa
     if not run_git_command(["merge-base", base, head]):
         msg = f"revisions have no merge base: {base_ref}, {head_ref}"
         raise ValueError(msg)
-    base_manifests = {manifest.path: manifest for manifest in _native_manifests_at_ref(base)}
-    head_manifests = {manifest.path: manifest for manifest in _native_manifests_at_ref(head)}
+    all_base = _native_manifests_at_ref(base)
+    all_head = _native_manifests_at_ref(head)
+    # A manifest stays in scope when either ref treats it as a manifest, so a head that adds an
+    # enclosing plugin cannot waive the bump an existing nested plugin owes.
+    kept = {
+        manifest.path
+        for ref, manifests in ((base, all_base), (head, all_head))
+        for manifest in without_nested_manifests(manifests, lambda path, ref=ref: read_ref_json(ref, path))
+    }
+    base_manifests = {manifest.path: manifest for manifest in all_base if manifest.path in kept}
+    head_manifests = {manifest.path: manifest for manifest in all_head if manifest.path in kept}
     manifests_by_path = base_manifests | head_manifests
     changed_paths = _git_paths(["diff", "--name-only", "-z", f"{base}...{head}"])
     changed_roots = {

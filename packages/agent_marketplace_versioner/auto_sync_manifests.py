@@ -51,13 +51,16 @@ from typing import Literal, TypedDict, TypeGuard
 
 from agent_marketplace_versioner.native_manifests import (
     NativeManifest,
+    discover_all_manifests,
     discover_manifests,
     is_git_visible,
     manifest_kind,
     manifest_root,
     manifests_for_source,
+    marketplace_entry_source,
     marketplace_root,
     source_for_path,
+    without_nested_manifests,
 )
 
 # Git status parsing constants
@@ -441,7 +444,9 @@ def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
         The source roots whose version-owning manifests were updated.
     """
     staged_paths = _staged_paths()
-    manifests = [manifest for manifest in discover_manifests(root) if manifest.path in staged_paths]
+    manifests = without_nested_manifests(
+        [manifest for manifest in discover_all_manifests(root) if manifest.path in staged_paths], _read_staged_json
+    )
     updated: dict[Path, str] = {}
     status = get_git_status()
     relocated_manifests = {
@@ -499,22 +504,10 @@ def _marketplace_local_entries(
     entries: dict[Path, _MarketplacePluginEntry] = {}
     plugins = data.get("plugins", [])
     for entry in plugins:
-        source = _marketplace_entry_source(entry)
+        source = marketplace_entry_source(entry)
         if source is not None and (path := _marketplace_local_source_path(source, marketplace, root)) is not None:
             entries[path] = entry
     return entries
-
-
-def _marketplace_entry_source(entry: _MarketplacePluginEntry) -> str | None:
-    source = entry.get("source")
-    if isinstance(source, str):
-        return source if source.startswith(".") else None
-    if _is_str_dict(source) and source.get("source") == "local":
-        path = source.get("path")
-        if not isinstance(path, str):
-            return None
-        return path if path.startswith(".") else None
-    return None
 
 
 def _marketplace_local_source_path(source: str, marketplace: NativeManifest, root: Path) -> Path | None:
@@ -614,7 +607,7 @@ def _sync_native_marketplace(
         entry
         for entry in plugins
         if not (
-            (source := _marketplace_entry_source(entry)) is not None
+            (source := marketplace_entry_source(entry)) is not None
             and _marketplace_local_source_path(source, marketplace, root) in deleted
         )
     ]
@@ -2152,7 +2145,7 @@ def _reconcile_marketplace(plugins_root: Path, *, dry_run: bool) -> bool:
     # Only track locally-sourced plugins (relative path strings) in the stale check.
     # Plugins with external sources (dict with "source": "github" etc.) are managed
     # manually and must not be removed by reconciliation.
-    registered_names = {p["name"] for p in plugins_list if _marketplace_entry_source(p) is not None}
+    registered_names = {p["name"] for p in plugins_list if marketplace_entry_source(p) is not None}
 
     # Discover plugins on disk — keyed by canonical name (from plugin.json),
     # mapped to directory name (for the source field).
