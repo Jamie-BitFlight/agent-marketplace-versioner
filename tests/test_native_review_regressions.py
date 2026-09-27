@@ -464,6 +464,19 @@ def test_marketplace_membership_keeps_a_bump_committed_at_head(tmp_path: Path, m
     assert catalog_version(tmp_path) == "1.1.0"
 
 
+def test_marketplace_membership_bumps_a_worktree_behind_a_bumped_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    base = commit_catalog(tmp_path, {"one": "./plugins/one"})
+    head = commit_catalog(tmp_path, {"one": "./plugins/one", "two": "./plugins/two"}, version="1.1.0")
+    git(tmp_path, "checkout", "--quiet", base)
+    monkeypatch.chdir(tmp_path)
+
+    sync_native_marketplaces(base_ref=base, head_ref=head)
+    assert catalog_version(tmp_path) == "1.1.0"
+
+
 def test_marketplace_membership_reads_each_revisions_version_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

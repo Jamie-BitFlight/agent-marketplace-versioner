@@ -555,11 +555,16 @@ def _catalog_entries(data: object) -> dict[str, dict[str, object]]:
     return {name: entry for entry in plugins if _is_str_dict(entry) and isinstance(name := entry.get("name"), str)}
 
 
+def _catalog_version(data: object) -> tuple[int, int, int] | None:
+    # Each catalog declares its own version field: top-level first, as in discovery.
+    return extract_version_from_json(data, ["version"]) or extract_version_from_json(data, ["metadata", "version"])
+
+
 class _CatalogRefChanges(NamedTuple):
     removed: set[str]
     added: set[str]
     edited: set[str]
-    version_bumped: bool
+    base_version: tuple[int, int, int] | None
 
 
 def _catalog_changes_between_refs(
@@ -571,9 +576,9 @@ def _catalog_changes_between_refs(
     catalog absent at either ref yields no change.
 
     Returns:
-        Plugin names removed, added, and edited, and whether head already raised the version.
+        Plugin names removed, added, and edited, and the catalog version at *base_ref*.
     """
-    unchanged = _CatalogRefChanges(set(), set(), set(), version_bumped=False)
+    unchanged = _CatalogRefChanges(set(), set(), set(), base_version=None)
     if base_ref is None:
         return unchanged
     base = _catalog_at_ref(root, base_ref, marketplace.path)
@@ -581,18 +586,11 @@ def _catalog_changes_between_refs(
     if base is None or head is None:
         return unchanged
     base_entries, head_entries = _catalog_entries(base), _catalog_entries(head)
-    # Each revision declares its own version field: top-level first, as in discovery.
-    base_version = extract_version_from_json(base, ["version"]) or extract_version_from_json(
-        base, ["metadata", "version"]
-    )
-    head_version = extract_version_from_json(head, ["version"]) or extract_version_from_json(
-        head, ["metadata", "version"]
-    )
     return _CatalogRefChanges(
         removed=base_entries.keys() - head_entries.keys(),
         added=head_entries.keys() - base_entries.keys(),
         edited={name for name in base_entries.keys() & head_entries.keys() if base_entries[name] != head_entries[name]},
-        version_bumped=base_version is not None and head_version is not None and head_version > base_version,
+        base_version=_catalog_version(base),
     )
 
 
@@ -708,7 +706,11 @@ def _sync_native_marketplace(
         not bump or marketplace.version_key_path is None or not _marketplace_differs_from_head(marketplace.path)
     ):
         return False
-    if not bump or marketplace.version_key_path is None or manual_version or ref_changes.version_bumped:
+    # The working catalog already carries a bump above base_ref, e.g. one committed at head_ref.
+    worktree_bumped = (
+        ref_changes.base_version is not None and (_catalog_version(data) or (0, 0, 0)) > ref_changes.base_version
+    )
+    if not bump or marketplace.version_key_path is None or manual_version or worktree_bumped:
         if changed and not dry_run:
             _write_json_lf(marketplace_path, _format_json(data))
         return changed
