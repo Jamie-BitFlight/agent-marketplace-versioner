@@ -326,6 +326,23 @@ def test_reconcile_staged_leaves_an_unstaged_manifest_deletion_alone_when_writin
     assert not manifest.exists()
 
 
+def test_reconcile_staged_reconciles_the_index_manifest_when_the_worktree_deleted_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = _committed_plugin_with_skill(tmp_path)
+    bar = tmp_path / "tool/skills/bar/SKILL.md"
+    bar.parent.mkdir(parents=True)
+    bar.write_text("---\nname: bar\n---\n")
+    git(tmp_path, "add", ".")
+    manifest.unlink()
+    monkeypatch.chdir(tmp_path)
+
+    assert CliRunner().invoke(app, ["reconcile", "--staged"]).exit_code == 0
+    assert not manifest.exists()
+    assert "./skills/bar" in json.loads(git(tmp_path, "show", ":tool/.claude-plugin/plugin.json"))["skills"]
+    assert CliRunner().invoke(app, ["reconcile", "--dry-run", "--staged"]).exit_code == 0
+
+
 def test_reconcile_staged_reports_staged_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _committed_plugin_with_skill(tmp_path)
     bar = tmp_path / "tool/skills/bar/SKILL.md"
