@@ -46,6 +46,7 @@ if isinstance(sys.stderr, TextIOWrapper):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from collections import defaultdict
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal, TypedDict, TypeGuard
 
@@ -505,7 +506,7 @@ def _marketplace_local_entries(
     return entries
 
 
-def _marketplace_entry_source(entry: _MarketplacePluginEntry) -> str | None:
+def _marketplace_entry_source(entry: Mapping[str, object]) -> str | None:
     source = entry.get("source")
     if isinstance(source, str):
         return source if source.startswith(".") else None
@@ -522,6 +523,35 @@ def _marketplace_local_source_path(source: str, marketplace: NativeManifest, roo
         return (root / marketplace_root(marketplace) / source).resolve().relative_to(root.resolve())
     except ValueError:
         return None
+
+
+def _with_membership_changes_since(
+    ref: str | None,
+    data: _MarketplaceJsonData,
+    marketplace: NativeManifest,
+    root: Path,
+    *,
+    deleted: list[Path],
+    added: list[Path],
+) -> tuple[list[Path], list[Path]]:
+    """Extend *deleted* and *added* with local catalog sources removed or added since *ref*.
+
+    Returns:
+        The extended lists; unchanged when *ref* is None or holds no readable catalog.
+    """
+    base = read_ref_json(ref, marketplace.path) if ref is not None else None
+    plugins = base.get("plugins") if _is_str_dict(base) else None
+    if not isinstance(plugins, list):
+        return deleted, added
+    base_sources = {
+        path
+        for entry in plugins
+        if _is_str_dict(entry)
+        and (source := _marketplace_entry_source(entry)) is not None
+        and (path := _marketplace_local_source_path(source, marketplace, root)) is not None
+    }
+    head_sources = set(_marketplace_local_entries(data, marketplace, root))
+    return [*deleted, *sorted(base_sources - head_sources)], [*added, *sorted(head_sources - base_sources)]
 
 
 def _bump_native_marketplace_version(
@@ -627,6 +657,7 @@ def _sync_native_marketplace(
         })
     for source, name in renamed.items():
         local_entries[source]["name"] = name
+    deleted, added = _with_membership_changes_since(base_ref, data, marketplace, root, deleted=deleted, added=added)
     changed = bool(deleted or added or renamed) or any(
         _source_differs_between_refs(root, source, marketplace.path, base_ref, head_ref) for source in local_plugins
     )

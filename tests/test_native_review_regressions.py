@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -374,6 +375,35 @@ def test_marketplace_sync_fails_for_an_unavailable_revision(tmp_path: Path, monk
 
     with pytest.raises(RuntimeError, match="bad revision"):
         sync_native_marketplaces(base_ref="missing", head_ref="HEAD")
+
+
+@pytest.mark.parametrize(
+    ("base_plugins", "head_plugins", "expected"),
+    [(["one", "two"], ["one"], "2.0.0"), (["one"], ["one", "two"], "1.1.0")],
+)
+def test_marketplace_sync_bumps_for_membership_change_between_refs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, base_plugins: list[str], head_plugins: list[str], expected: str
+) -> None:
+    initialize(tmp_path)
+    marketplace = tmp_path / ".claude-plugin/marketplace.json"
+
+    def commit(names: list[str]) -> str:
+        for name in {"one", "two"} - set(names):
+            shutil.rmtree(tmp_path / "plugins" / name, ignore_errors=True)
+        for name in names:
+            write_json(tmp_path / f"plugins/{name}/.claude-plugin/plugin.json", {"name": name, "version": "1.0.0"})
+        entries = [{"name": name, "source": f"./plugins/{name}"} for name in names]
+        write_json(marketplace, {"metadata": {"version": "1.0.0"}, "plugins": entries})
+        git(tmp_path, "add", "-A")
+        git(tmp_path, "commit", "--quiet", "-m", "+".join(names))
+        return git(tmp_path, "rev-parse", "HEAD").strip()
+
+    base = commit(base_plugins)
+    head = commit(head_plugins)
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_native_marketplaces(base_ref=base, head_ref=head) == [Path(".claude-plugin/marketplace.json")]
+    assert json.loads(marketplace.read_text())["metadata"]["version"] == expected
 
 
 def test_staged_sync_bumps_existing_manifest_when_adding_a_harness(
