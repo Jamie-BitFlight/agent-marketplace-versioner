@@ -5,3 +5,10 @@
   pass_filenames: false
   always_run: true
   stages: [pre-commit]
+- id: agent-marketplace-versioner-check
+  name: Check agent marketplace manifests without editing versions
+  entry: agent-marketplace-versioner reconcile --dry-run --staged
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]

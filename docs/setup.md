@@ -135,8 +135,29 @@ unwanted; enforcement lives entirely at merge:
    and bumps catalog versions. With no hook, it runs even when every catalog is
    versionless.
 
+**Merge-time** — the hook never bumps; the post-merge workflow assigns patch
+bumps. Many open PRs touch the same plugins, and per-commit bumps on each branch
+conflict on every rebase:
+
+1. The pre-commit hook uses the check-only id `agent-marketplace-versioner-check`
+   (`reconcile --dry-run --staged`). It reports component and catalog drift in
+   staged content and edits no version. To clear the drift, run `reconcile`; it
+   minor-bumps each plugin whose component arrays change.
+2. A branch may still set a deliberate minor or major version in its manifests.
+   That version can still conflict with post-merge patch bumps on the default
+   branch.
+3. A post-merge workflow on the default branch checks out with `fetch-depth: 0`,
+   runs `repair`, then `sync --marketplace --base-ref <before> --head-ref <sha>`,
+   and owns commit and push. `repair` exits 1 in a shallow checkout. It
+   patch-bumps each manifest whose source root changed after the last
+   version-changing commit. A branch version merged by squash, or by a merge
+   commit whose branch bumped last, gets no extra bump. When the default branch
+   also changed that plugin after the branch point, `repair` adds a patch on top
+   of the branch version, for example `1.1.0` becomes `1.1.1`.
+
 Choose Hook + CI when local plugin evaluation matters during development;
-choose CI-only when one enforcement point at merge beats per-machine setup.
+choose CI-only when one enforcement point at merge beats per-machine setup;
+choose Merge-time when concurrent PRs on the same plugins conflict on versions.
 
 ## Troubleshooting
 

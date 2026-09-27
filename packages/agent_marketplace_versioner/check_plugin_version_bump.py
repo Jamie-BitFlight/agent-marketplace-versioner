@@ -353,6 +353,9 @@ def _run_repair() -> int:
         well-formed string ``version``) -- that plugin remains drifted and
         must not be reported as a successful repair.
     """
+    if run_git_command(["rev-parse", "--is-shallow-repository"]) == "true":
+        sys.stderr.write("Error: repair needs full history; this repository is shallow (use fetch-depth: 0)\n")
+        return 1
     repaired: list[dict[str, str]] = []
     failed: list[str] = []
     for path in _native_drifted_manifests():

@@ -13,6 +13,7 @@ The distributable hook and composite GitHub Action invoke the same CLI.
 | `sync --marketplace` | Reconcile and version native marketplace catalogs. |
 | `repair` | Apply manifest repairs and report results as JSON. |
 | `reconcile --dry-run` | Preview full reconciliation; exits 1 when changes are needed. |
+| `reconcile --dry-run --staged` | Same preview, ignoring untracked files. |
 | `reconcile` | Repair explicit native component arrays and catalog membership; catalog versions are unchanged. |
 
 Both revisions must exist locally for `check`. A shallow checkout may need
@@ -43,6 +44,20 @@ Each plugin source root computes one shared version for all of its native manife
 using the highest sibling version as its staged-change baseline.
 Catalog entry additions and removals are also reconciled and staged, without
 changing the catalog version or introducing a version field.
+
+Use the hook id `agent-marketplace-versioner-check` instead when a post-merge
+workflow assigns versions. It runs `reconcile --dry-run --staged`: it never
+bumps, never writes, ignores untracked files, and exits 1 when component arrays
+or catalog membership drift from the committed content. To clear reported drift,
+run `reconcile` and stage the result. `reconcile` minor-bumps each plugin whose
+component arrays change, because a new component is a minor change. See the
+Merge-time approach in
+[Choosing a versioning approach](setup.md#choosing-a-versioning-approach).
+
+```yaml
+    hooks:
+      - id: agent-marketplace-versioner-check
+```
 
 `rev: v1` is a moving compatibility tag, but each runner caches the revision first
 resolved for that literal value. After a new v1 release, refresh an existing local

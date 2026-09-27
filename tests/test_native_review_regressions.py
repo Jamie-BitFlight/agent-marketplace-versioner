@@ -233,6 +233,22 @@ def test_reconcile_ignores_nested_gitignored_invocable_skills(tmp_path: Path, mo
     assert json.loads(manifest.read_text())["commands"] == []
 
 
+@pytest.mark.parametrize(("args", "exit_code"), [(["--staged"], 0), ([], 1)])
+def test_reconcile_staged_ignores_untracked_skills(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: list[str], exit_code: int
+) -> None:
+    initialize(tmp_path)
+    write_json(tmp_path / "tool/.claude-plugin/plugin.json", {"name": "tool", "version": "1.0.0", "skills": []})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    wip = tmp_path / "tool/skills/wip/SKILL.md"
+    wip.parent.mkdir(parents=True)
+    wip.write_text("---\nname: wip\n---\n")
+    monkeypatch.chdir(tmp_path)
+
+    assert CliRunner().invoke(app, ["reconcile", "--dry-run", *args]).exit_code == exit_code
+
+
 def test_sync_updates_local_catalog_name_after_plugin_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     initialize(tmp_path)
     catalog = tmp_path / ".claude-plugin/marketplace.json"

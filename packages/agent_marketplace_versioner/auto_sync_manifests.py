@@ -2229,14 +2229,23 @@ def reconcile(*, dry_run: bool) -> int:
     return 0
 
 
-def reconcile_native_manifests(*, dry_run: bool) -> int:
+def reconcile_native_manifests(*, dry_run: bool, staged: bool = False) -> int:
     """Reconcile native component arrays and catalog membership.
+
+    With *staged*, untracked files are ignored, so only content in the Git
+    index counts. Pre-commit runners stash unstaged edits to tracked files
+    before a hook runs, so the working tree then matches the index.
 
     Returns:
         One for detected drift in dry-run mode, otherwise zero.
     """
+    manifests = discover_manifests()
+    tracked: set[Path] | None = None
+    if staged:
+        tracked = _staged_paths()
+        manifests = [manifest for manifest in manifests if manifest.path in tracked]
     drift = False
-    for manifest in discover_manifests():
+    for manifest in manifests:
         if manifest.kind != "plugin":
             continue
         source = manifest_root(manifest)
@@ -2247,6 +2256,15 @@ def reconcile_native_manifests(*, dry_run: bool) -> int:
             "agents": _discover_agents(source),
             "commands": _discover_commands(source) + _discover_invocable_skills(source),
         }
+        if tracked is not None:
+            components = {
+                field: [
+                    item
+                    for item in items
+                    if (path := source / item.removeprefix("./")) in tracked or path / "SKILL.md" in tracked
+                ]
+                for field, items in components.items()
+            }
         for field, items in components.items():
             if isinstance(data.get(field), list):
                 changed |= _reconcile_mode_b(data, field, items, source.as_posix(), dry_run=dry_run)
@@ -2254,7 +2272,7 @@ def reconcile_native_manifests(*, dry_run: bool) -> int:
             data["version"] = bump_version(data.get("version", "0.0.0"), "minor")
             _write_json_lf(manifest.path, _format_json(data))
         drift |= changed
-    drift |= bool(sync_native_marketplaces(bump=False, dry_run=dry_run))
+    drift |= bool(sync_native_marketplaces(bump=False, dry_run=dry_run, manifests=manifests))
     print("Drift detected." if drift else "No drift detected — all manifests match filesystem.")
     return int(drift and dry_run)
 
