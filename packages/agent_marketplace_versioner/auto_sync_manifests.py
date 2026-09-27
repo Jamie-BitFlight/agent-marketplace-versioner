@@ -548,32 +548,33 @@ def _catalog_at_ref(root: Path, ref: str, path: Path) -> object | None:
         raise RuntimeError(f"cannot parse {path.as_posix()} at {ref}") from error
 
 
-def _catalog_names(data: object) -> set[str]:
+def _catalog_entries(data: object) -> dict[str, dict[str, object]]:
     plugins = data.get("plugins") if _is_str_dict(data) else None
     if not isinstance(plugins, list):
-        return set()
-    return {name for entry in plugins if _is_str_dict(entry) and isinstance(name := entry.get("name"), str)}
+        return {}
+    return {name: entry for entry in plugins if _is_str_dict(entry) and isinstance(name := entry.get("name"), str)}
 
 
 def _membership_changes_between_refs(
     root: Path, path: Path, base_ref: str | None, head_ref: str
-) -> tuple[set[str], set[str]]:
-    """Return plugin names removed from and added to the catalog between the refs.
+) -> tuple[set[str], set[str], set[str]]:
+    """Return plugin names removed, added, and edited in the catalog between the refs.
 
-    A moved plugin keeps its name, so the source diff reports it instead. A catalog
-    absent at either ref yields no membership change.
+    Entries match by name, so a moved plugin is edited, not removed and added. A
+    catalog absent at either ref yields no change.
 
     Returns:
-        ``(removed, added)`` plugin names.
+        ``(removed, added, edited)`` plugin names.
     """
     if base_ref is None:
-        return set(), set()
+        return set(), set(), set()
     base = _catalog_at_ref(root, base_ref, path)
     head = _catalog_at_ref(root, head_ref, path)
     if base is None or head is None:
-        return set(), set()
-    base_names, head_names = _catalog_names(base), _catalog_names(head)
-    return base_names - head_names, head_names - base_names
+        return set(), set(), set()
+    base_entries, head_entries = _catalog_entries(base), _catalog_entries(head)
+    edited = {name for name in base_entries.keys() & head_entries.keys() if base_entries[name] != head_entries[name]}
+    return base_entries.keys() - head_entries.keys(), head_entries.keys() - base_entries.keys(), edited
 
 
 def _bump_native_marketplace_version(
@@ -678,8 +679,8 @@ def _sync_native_marketplace(
         })
     for source, name in renamed.items():
         local_entries[source]["name"] = name
-    removed, introduced = _membership_changes_between_refs(root, marketplace.path, base_ref, head_ref)
-    changed = bool(deleted or added or renamed or removed or introduced) or any(
+    removed, introduced, edited = _membership_changes_between_refs(root, marketplace.path, base_ref, head_ref)
+    changed = bool(deleted or added or renamed or removed or introduced or edited) or any(
         _source_differs_between_refs(root, source, marketplace.path, base_ref, head_ref) for source in local_plugins
     )
     if not changed and (

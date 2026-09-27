@@ -405,6 +405,12 @@ def catalog_version(repo: Path) -> str:
         pytest.param({"one": "./plugins/one"}, {"one": "./plugins/one", "two": "./plugins/two"}, "1.1.0", id="add"),
         pytest.param({"one": "./plugins/one"}, {"one": "./plugins/moved/one"}, "1.0.1", id="move"),
         pytest.param({"one": "./plugins/one", "remote": REMOTE}, {"one": "./plugins/one"}, "2.0.0", id="remote"),
+        pytest.param(
+            {"one": "./plugins/one", "remote": REMOTE},
+            {"one": "./plugins/one", "remote": {**REMOTE, "repo": "example/moved"}},
+            "1.0.1",
+            id="remote-source",
+        ),
     ],
 )
 def test_marketplace_sync_bumps_for_membership_change_between_refs(
