@@ -836,3 +836,40 @@ def test_check_does_not_require_the_enclosing_bump_for_a_new_declared_nested_plu
     monkeypatch.chdir(tmp_path)
 
     assert check_native_version_bumps(base) == []
+
+
+def commit_two_declared_plugins(repo: Path) -> Path:
+    catalog = repo / ".claude-plugin/marketplace.json"
+    write_json(catalog, {"plugins": [{"name": "a", "source": "./a"}, {"name": "b", "source": "./b"}]})
+    initialize(repo)
+    for name in ("a", "b"):
+        write_json(repo / name / ".claude-plugin/plugin.json", {"name": name, "version": "1.0.0"})
+    (repo / "a/moved.txt").write_text("content\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "--quiet", "-m", "base")
+    return catalog
+
+
+def test_check_requires_the_rename_source_owner_bump(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    commit_two_declared_plugins(tmp_path)
+    base = git(tmp_path, "rev-parse", "HEAD").strip()
+    git(tmp_path, "mv", "a/moved.txt", "b/moved.txt")
+    write_json(tmp_path / "b/.claude-plugin/plugin.json", {"name": "b", "version": "1.0.1"})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "move file to b")
+    monkeypatch.chdir(tmp_path)
+
+    assert check_native_version_bumps(base) == [Path("a/.claude-plugin/plugin.json")]
+
+
+def test_staged_relocation_under_a_plugin_does_not_bump_the_enclosing_plugin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog = commit_two_declared_plugins(tmp_path)
+    git(tmp_path, "mv", "a", "b/a")
+    write_json(catalog, {"plugins": [{"name": "a", "source": "./b/a"}, {"name": "b", "source": "./b"}]})
+    git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert Path("b") not in sync_staged_manifests(tmp_path)
+    assert version(tmp_path, Path("b/.claude-plugin/plugin.json")) == "1.0.0"

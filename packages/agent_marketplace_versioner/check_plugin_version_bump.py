@@ -160,7 +160,7 @@ def _moved_manifests_missing_bumps(
 
 def _changed_roots(revisions: str, kept_base: list[NativeManifest], kept_head: list[NativeManifest]) -> set[Path]:
     # A path's owner on each side counts, so promoting a fixture still requires its former owner's bump.
-    changed_paths = _git_paths(["diff", "--name-only", "-z", revisions])
+    changed_paths = _git_paths(["diff", "--name-only", "--no-renames", "-z", revisions])
     added = set(_git_paths(["diff", "--name-only", "--no-renames", "--diff-filter=A", "-z", revisions]))
     deleted = set(_git_paths(["diff", "--name-only", "--no-renames", "--diff-filter=D", "-z", revisions]))
     return {
