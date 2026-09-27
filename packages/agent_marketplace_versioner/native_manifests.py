@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -101,8 +103,8 @@ def _version_key_path(root: Path, path: Path, kind: Literal["plugin", "marketpla
     return None
 
 
-def discover_manifests(root: Path = Path()) -> list[NativeManifest]:
-    """Find every Git-visible conventional manifest below *root*.
+def discover_all_manifests(root: Path = Path()) -> list[NativeManifest]:
+    """Find every Git-visible conventional manifest below *root*, nested ones included.
 
     Returns:
         Native manifests sorted by repository-relative path.
@@ -114,6 +116,76 @@ def discover_manifests(root: Path = Path()) -> list[NativeManifest]:
             continue
         manifests.append(NativeManifest(path=path, kind=kind, version_key_path=_version_key_path(root, path, kind)))
     return sorted(manifests, key=lambda manifest: manifest.path.as_posix())
+
+
+def discover_manifests(root: Path = Path()) -> list[NativeManifest]:
+    """Find every Git-visible conventional manifest below *root* that is not plugin content.
+
+    Returns:
+        Native manifests sorted by repository-relative path.
+    """
+    return without_nested_manifests(discover_all_manifests(root), lambda path: _read_json(root / path))
+
+
+def _read_json(path: Path) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def marketplace_entry_source(entry: object) -> str | None:
+    """Return the relative local source of one marketplace plugin entry.
+
+    Returns:
+        The ``./``-style source, or None for a remote or malformed entry.
+    """
+    source = entry.get("source") if isinstance(entry, dict) else None
+    if isinstance(source, dict) and source.get("source") == "local":
+        source = source.get("path")
+    return source if isinstance(source, str) and source.startswith(".") else None
+
+
+def without_nested_manifests(
+    manifests: list[NativeManifest], read_json: Callable[[Path], object]
+) -> list[NativeManifest]:
+    """Drop manifests that are content of an enclosing plugin, such as eval fixtures.
+
+    A plugin manifest nests when its source root lies strictly inside another plugin's source
+    root; a catalog nests when its source-resolution root does. A nested plugin stays a plugin
+    when a non-nested catalog declares its source root as a local source. A plugin at the
+    repository root encloses nothing.
+
+    Args:
+        manifests: Candidate manifests from one tree: worktree, index, or Git ref.
+        read_json: Reads a manifest's parsed JSON from that same tree.
+
+    Returns:
+        The manifests that are not plugin content, in their input order.
+    """
+    # ponytail: a repository-root plugin never encloses others, so its own fixtures still count as
+    # manifests; add an explicit exclude option when a root-level plugin ships fixture manifests.
+    plugin_roots = {manifest_root(manifest) for manifest in manifests if manifest.kind == "plugin"} - {Path()}
+
+    def nested(directory: Path) -> bool:
+        return not plugin_roots.isdisjoint(directory.parents)
+
+    catalogs = [
+        manifest for manifest in manifests if manifest.kind == "marketplace" and not nested(marketplace_root(manifest))
+    ]
+    declared: set[Path] = set()
+    for catalog in catalogs:
+        data = read_json(catalog.path)
+        entries = data.get("plugins") if isinstance(data, dict) else None
+        for entry in entries if isinstance(entries, list) else []:
+            if (source := marketplace_entry_source(entry)) is not None:
+                declared.add(Path(os.path.normpath(marketplace_root(catalog) / source)))
+    return [
+        manifest
+        for manifest in manifests
+        if manifest in catalogs
+        or (manifest.kind == "plugin" and (not nested(manifest_root(manifest)) or manifest_root(manifest) in declared))
+    ]
 
 
 def marketplace_sources(manifest: NativeManifest, root: Path = Path()) -> list[Path]:
