@@ -457,6 +457,12 @@ class TestRunAudit:
 class TestRunRepair:
     """Tests for _run_repair -- the --repair CLI mode."""
 
+    @pytest.fixture(autouse=True)
+    def _full_history_repo(self, tmp_path: Path, monkeypatch: Any) -> None:
+        # _run_repair refuses shallow clones; CI checks this project out at depth 1.
+        _git(tmp_path, "init", "--quiet")
+        monkeypatch.chdir(tmp_path)
+
     def test_reports_no_repairs_when_no_drift(self, tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
         """No drifted plugins -- reports an empty JSON result and exits 0.
 
