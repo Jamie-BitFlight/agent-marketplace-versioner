@@ -2386,6 +2386,8 @@ def reconcile_native_manifests(*, dry_run: bool, staged: bool = False) -> int:
     for manifest in manifests:
         if manifest.kind != "plugin":
             continue
+        if staged and not dry_run and not manifest.path.exists():
+            continue  # an unstaged deletion; writing would undo it
         source = manifest_root(manifest)
         # A write keeps unstaged manifest edits; only the dry-run check judges the index manifest.
         data = json.loads(
