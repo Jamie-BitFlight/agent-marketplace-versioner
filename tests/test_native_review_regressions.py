@@ -314,6 +314,24 @@ def test_reconcile_staged_ignores_unstaged_catalog_deletion(tmp_path: Path, monk
     assert not catalog.exists()
 
 
+def test_reconcile_staged_judges_nested_plugins_by_the_index_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    write_json(tmp_path / "plugins/x/.claude-plugin/plugin.json", {"name": "x", "version": "1.0.0"})
+    write_json(tmp_path / "plugins/x/fx/.claude-plugin/plugin.json", {"name": "fx", "version": "0.1.0"})
+    catalog = tmp_path / ".claude-plugin/marketplace.json"
+    indexed = {"plugins": [{"name": "x", "source": "./plugins/x"}, {"name": "fx", "source": "./plugins/x/fx"}]}
+    write_json(catalog, indexed)
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    write_json(catalog, {"plugins": indexed["plugins"][:1]})
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, ["reconcile", "--dry-run", "--staged"])
+    assert result.exit_code == 0, result.output
+
+
 def test_reconcile_staged_reports_staged_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _committed_plugin_with_skill(tmp_path)
     bar = tmp_path / "tool/skills/bar/SKILL.md"

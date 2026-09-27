@@ -2377,11 +2377,14 @@ def reconcile_native_manifests(*, dry_run: bool, staged: bool = False) -> int:
     Returns:
         One for detected drift in dry-run mode, otherwise zero.
     """
-    manifests = discover_manifests()
-    index: set[Path] | None = None
-    if staged:
-        index = _staged_paths()
-        manifests = [manifest for manifest in manifests if manifest.path in index]
+    index = _staged_paths() if staged else None
+    manifests = (
+        without_nested_manifests(
+            [manifest for manifest in discover_all_manifests() if manifest.path in index], _read_staged_json
+        )
+        if index is not None
+        else discover_manifests()
+    )
     drift = False
     for manifest in manifests:
         if manifest.kind != "plugin":
