@@ -13,9 +13,7 @@ from tests.integration_consumer import git, prepare, stage
 ROOT: Final = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.slow
-@pytest.mark.parametrize("runner", ["prek", "pre-commit"])
-def test_distributed_hook_installs_syncs_and_is_idempotent(tmp_path: Path, runner: str) -> None:
+def _consumer_with_hook(tmp_path: Path, runner: str, hook_id: str, consumer: Path) -> tuple[list[str], dict[str, str]]:
     hook_repo = tmp_path / "hook"
     subprocess.run(["git", "clone", "--quiet", "--local", str(ROOT), str(hook_repo)], check=True)
     shutil.copyfile(ROOT / ".pre-commit-hooks.yaml", hook_repo / ".pre-commit-hooks.yaml")
@@ -23,20 +21,27 @@ def test_distributed_hook_installs_syncs_and_is_idempotent(tmp_path: Path, runne
     git(hook_repo, "config", "user.email", "test@example.invalid")
     git(hook_repo, "add", ".pre-commit-hooks.yaml")
     git(hook_repo, "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--allow-empty", "-m", "hook fixture")
-    consumer = tmp_path / "consumer with spaces"
     prepare(consumer)
     (consumer / ".pre-commit-config.yaml").write_text(
         f"repos:\n  - repo: {hook_repo.as_uri()}\n    rev: {git(hook_repo, 'rev-parse', 'HEAD').strip()}\n"
-        "    hooks:\n      - id: agent-marketplace-versioner\n",
+        f"    hooks:\n      - id: {hook_id}\n",
         encoding="utf-8",
     )
     git(consumer, "add", ".pre-commit-config.yaml")
     git(consumer, "commit", "--quiet", "-m", "configure hook")
-    stage(consumer)
     env = {**os.environ, "PREK_HOME": str(tmp_path / "prek"), "PRE_COMMIT_HOME": str(tmp_path / "pre-commit")}
     command = ["uv", "tool", "run", "--from", runner, runner]
-
     subprocess.run([*command, "install", "--install-hooks"], cwd=consumer, env=env, check=True, capture_output=True)
+    return command, env
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("runner", ["prek", "pre-commit"])
+def test_distributed_hook_installs_syncs_and_is_idempotent(tmp_path: Path, runner: str) -> None:
+    consumer = tmp_path / "consumer with spaces"
+    command, env = _consumer_with_hook(tmp_path, runner, "agent-marketplace-versioner", consumer)
+    stage(consumer)
+
     first = subprocess.run([*command, "run"], cwd=consumer, env=env, check=False, capture_output=True, text=True)
 
     assert first.returncode == 0, first.stdout + first.stderr
@@ -51,46 +56,31 @@ def test_distributed_hook_installs_syncs_and_is_idempotent(tmp_path: Path, runne
 
 @pytest.mark.slow
 @pytest.mark.parametrize("runner", ["prek", "pre-commit"])
-def test_check_hook_reports_drift_without_editing_versions(tmp_path: Path, runner: str) -> None:
-    hook_repo = tmp_path / "hook"
-    subprocess.run(["git", "clone", "--quiet", "--local", str(ROOT), str(hook_repo)], check=True)
-    shutil.copyfile(ROOT / ".pre-commit-hooks.yaml", hook_repo / ".pre-commit-hooks.yaml")
-    git(hook_repo, "config", "user.name", "Integration Test")
-    git(hook_repo, "config", "user.email", "test@example.invalid")
-    git(hook_repo, "add", ".pre-commit-hooks.yaml")
-    git(hook_repo, "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--allow-empty", "-m", "hook fixture")
+def test_check_hook_judges_staged_content_without_editing_versions(tmp_path: Path, runner: str) -> None:
     consumer = tmp_path / "consumer"
-    prepare(consumer)
-    (consumer / ".pre-commit-config.yaml").write_text(
-        f"repos:\n  - repo: {hook_repo.as_uri()}\n    rev: {git(hook_repo, 'rev-parse', 'HEAD').strip()}\n"
-        "    hooks:\n      - id: agent-marketplace-versioner-check\n",
-        encoding="utf-8",
-    )
-    git(consumer, "add", ".pre-commit-config.yaml")
-    git(consumer, "commit", "--quiet", "-m", "configure hook")
+    command, env = _consumer_with_hook(tmp_path, runner, "agent-marketplace-versioner-check", consumer)
+    manifest = consumer / "catalog/tool/.codex-plugin/plugin.json"
+    manifest.write_text(json.dumps({"name": "tool", "version": "1.0.0", "skills": []}) + "\n", encoding="utf-8")
+    subprocess.run(["git", "commit", "--quiet", "-am", "declare skills array"], cwd=consumer, env=env, check=True)
     stage(consumer)
-    env = {**os.environ, "PREK_HOME": str(tmp_path / "prek"), "PRE_COMMIT_HOME": str(tmp_path / "pre-commit")}
-    command = ["uv", "tool", "run", "--from", runner, runner]
-    subprocess.run([*command, "install", "--install-hooks"], cwd=consumer, env=env, check=True, capture_output=True)
+    wip = consumer / "catalog/tool/skills/wip/SKILL.md"
+    wip.parent.mkdir(parents=True)
+    wip.write_text("---\nname: wip\n---\n", encoding="utf-8")
     staged = git(consumer, "diff", "--cached")
 
-    clean = subprocess.run([*command, "run"], cwd=consumer, env=env, check=False, capture_output=True, text=True)
+    untracked = subprocess.run([*command, "run"], cwd=consumer, env=env, check=False, capture_output=True, text=True)
 
-    assert clean.returncode == 0, clean.stdout + clean.stderr
+    assert untracked.returncode == 0, untracked.stdout + untracked.stderr
     assert git(consumer, "diff", "--cached") == staged
     assert git(consumer, "diff") == ""
 
-    manifest = consumer / "catalog/tool/.codex-plugin/plugin.json"
-    manifest.write_text(json.dumps({"name": "tool", "version": "1.0.0", "skills": []}) + "\n", encoding="utf-8")
-    skill = consumer / "catalog/tool/skills/demo/SKILL.md"
-    skill.parent.mkdir(parents=True)
-    skill.write_text("---\nname: demo\n---\n", encoding="utf-8")
-    git(consumer, "add", ".")
+    git(consumer, "add", str(wip))
     staged = git(consumer, "diff", "--cached")
 
     drift = subprocess.run([*command, "run"], cwd=consumer, env=env, check=False, capture_output=True, text=True)
 
     assert drift.returncode != 0, drift.stdout + drift.stderr
+    assert "Drift detected" in drift.stdout
     assert git(consumer, "diff", "--cached") == staged
     assert git(consumer, "diff") == ""
 

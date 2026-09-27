@@ -1116,11 +1116,11 @@ class TestRepairPluginVersionIntegration:
 
 @pytest.mark.integration
 class TestRunRepairMergeShapesIntegration:
-    """Repair adds no patch bump when the merged change already changed the version."""
+    """Repair patch-bumps only content changed after the last version-changing commit."""
 
     @staticmethod
     def _repo_with_plugin(repo: Path) -> Path:
-        _git(repo, "init", "--initial-branch=main")
+        _git(repo, "init")
         _git(repo, "config", "commit.gpgsign", "false")
         manifest = _write_plugin_json(repo, "dh", "1.0.0")
         (repo / "plugins" / "dh" / "README.md").write_text("before\n", encoding="utf-8")
@@ -1144,25 +1144,55 @@ class TestRunRepairMergeShapesIntegration:
         assert self._repair(capsys) == {"repaired": [], "failed": []}
         assert json.loads(manifest.read_text(encoding="utf-8"))["version"] == "1.1.0"
 
-    @pytest.mark.parametrize(("bump_on_branch", "expected_version"), [(True, "1.1.0"), (False, "1.0.1")])
+    @pytest.mark.parametrize(
+        ("bump_on_branch", "main_path", "expected_version"),
+        [
+            (True, "unrelated.txt", "1.1.0"),
+            (False, "unrelated.txt", "1.0.1"),
+            # Main changed the plugin after the branch point: the deliberate 1.1.0 gets a patch on top.
+            (True, "plugins/dh/NOTES.md", "1.1.1"),
+        ],
+    )
     def test_merge_commit_after_branch_bumps_last(
-        self, tmp_path: Path, monkeypatch: Any, capsys: Any, *, bump_on_branch: bool, expected_version: str
+        self,
+        tmp_path: Path,
+        monkeypatch: Any,
+        capsys: Any,
+        *,
+        bump_on_branch: bool,
+        main_path: str,
+        expected_version: str,
     ) -> None:
         monkeypatch.chdir(tmp_path)
         manifest = self._repo_with_plugin(tmp_path)
+        default_branch = _git(tmp_path, "branch", "--show-current")
         _git(tmp_path, "switch", "-c", "feature")
         (tmp_path / "plugins" / "dh" / "README.md").write_text("after\n", encoding="utf-8")
         _git(tmp_path, "commit", "-am", "content")
         if bump_on_branch:
             _write_plugin_json(tmp_path, "dh", "1.1.0")
             _git(tmp_path, "commit", "-am", "minor bump")
-        _git(tmp_path, "switch", "main")
-        (tmp_path / "unrelated.txt").write_text("main moved\n", encoding="utf-8")
+        _git(tmp_path, "switch", default_branch)
+        (tmp_path / main_path).write_text("main moved\n", encoding="utf-8")
         _git(tmp_path, "add", ".")
-        _git(tmp_path, "commit", "-m", "unrelated")
+        _git(tmp_path, "commit", "-m", "main change")
         _git(tmp_path, "merge", "--no-ff", "-m", "merge feature", "feature")
 
         result = self._repair(capsys)
 
-        assert bool(result["repaired"]) is not bump_on_branch
+        assert bool(result["repaired"]) is (expected_version != "1.1.0")
         assert json.loads(manifest.read_text(encoding="utf-8"))["version"] == expected_version
+
+    def test_shallow_clone_fails_instead_of_reporting_no_drift(
+        self, tmp_path: Path, monkeypatch: Any, capsys: Any
+    ) -> None:
+        source = tmp_path / "source"
+        source.mkdir()
+        self._repo_with_plugin(source)
+        (source / "plugins" / "dh" / "README.md").write_text("after\n", encoding="utf-8")
+        _git(source, "commit", "-am", "content without bump")
+        _git(tmp_path, "clone", "--quiet", "--depth", "1", source.as_uri(), "shallow")
+        monkeypatch.chdir(tmp_path / "shallow")
+
+        assert gate._run_repair() == 1
+        assert "shallow" in capsys.readouterr().err
