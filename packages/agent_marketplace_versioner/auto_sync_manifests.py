@@ -738,10 +738,9 @@ def sync_native_marketplaces(
     updated: list[Path] = []
     for marketplace in (manifest for manifest in manifests if manifest.kind == "marketplace"):
         marketplace_path = root / marketplace.path
-        original_content = (
-            marketplace_path.read_bytes() if preserve_unstaged and _has_unstaged_change(marketplace.path) else None
-        )
-        if original_content is not None:
+        preserve = preserve_unstaged and _has_unstaged_change(marketplace.path)
+        original_content = marketplace_path.read_bytes() if preserve and marketplace_path.exists() else None
+        if preserve:
             staged_data = _read_staged_json(marketplace.path)
             if staged_data is None:
                 continue
@@ -760,10 +759,13 @@ def sync_native_marketplaces(
             if changed:
                 updated.append(marketplace.path)
         finally:
-            if original_content is not None:
+            if preserve:
                 if updated and not dry_run and updated[-1] == marketplace.path:
                     _stage_json(marketplace.path, json.loads(marketplace_path.read_text(encoding="utf-8")))
-                marketplace_path.write_bytes(original_content)
+                if original_content is None:
+                    marketplace_path.unlink()
+                else:
+                    marketplace_path.write_bytes(original_content)
             elif updated and not dry_run and updated[-1] == marketplace.path:
                 _git_stage_file(marketplace.path.as_posix(), root)
     return updated
@@ -2362,8 +2364,11 @@ def reconcile_native_manifests(*, dry_run: bool, staged: bool = False) -> int:
         if manifest.kind != "plugin":
             continue
         source = manifest_root(manifest)
+        # A write keeps unstaged manifest edits; only the dry-run check judges the index manifest.
         data = json.loads(
-            _run_git_bytes(["show", f":{manifest.path.as_posix()}"]) if staged else manifest.path.read_bytes()
+            _run_git_bytes(["show", f":{manifest.path.as_posix()}"])
+            if staged and dry_run
+            else manifest.path.read_bytes()
         )
         changed = False
         components = (
