@@ -47,7 +47,7 @@ if isinstance(sys.stderr, TextIOWrapper):
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Literal, TypedDict, TypeGuard
+from typing import Literal, NamedTuple, TypedDict, TypeGuard
 
 from agent_marketplace_versioner.native_manifests import (
     NativeManifest,
@@ -555,26 +555,41 @@ def _catalog_entries(data: object) -> dict[str, dict[str, object]]:
     return {name: entry for entry in plugins if _is_str_dict(entry) and isinstance(name := entry.get("name"), str)}
 
 
-def _membership_changes_between_refs(
-    root: Path, path: Path, base_ref: str | None, head_ref: str
-) -> tuple[set[str], set[str], set[str]]:
-    """Return plugin names removed, added, and edited in the catalog between the refs.
+class _CatalogRefChanges(NamedTuple):
+    removed: set[str]
+    added: set[str]
+    edited: set[str]
+    version_bumped: bool
+
+
+def _catalog_changes_between_refs(
+    root: Path, marketplace: NativeManifest, base_ref: str | None, head_ref: str
+) -> _CatalogRefChanges:
+    """Compare the catalog at *base_ref* with the catalog at *head_ref*.
 
     Entries match by name, so a moved plugin is edited, not removed and added. A
     catalog absent at either ref yields no change.
 
     Returns:
-        ``(removed, added, edited)`` plugin names.
+        Plugin names removed, added, and edited, and whether head already raised the version.
     """
+    unchanged = _CatalogRefChanges(set(), set(), set(), version_bumped=False)
     if base_ref is None:
-        return set(), set(), set()
-    base = _catalog_at_ref(root, base_ref, path)
-    head = _catalog_at_ref(root, head_ref, path)
+        return unchanged
+    base = _catalog_at_ref(root, base_ref, marketplace.path)
+    head = _catalog_at_ref(root, head_ref, marketplace.path)
     if base is None or head is None:
-        return set(), set(), set()
+        return unchanged
     base_entries, head_entries = _catalog_entries(base), _catalog_entries(head)
-    edited = {name for name in base_entries.keys() & head_entries.keys() if base_entries[name] != head_entries[name]}
-    return base_entries.keys() - head_entries.keys(), head_entries.keys() - base_entries.keys(), edited
+    key_path = list(marketplace.version_key_path or ())
+    base_version = extract_version_from_json(base, key_path) if key_path else None
+    head_version = extract_version_from_json(head, key_path) if key_path else None
+    return _CatalogRefChanges(
+        removed=base_entries.keys() - head_entries.keys(),
+        added=head_entries.keys() - base_entries.keys(),
+        edited={name for name in base_entries.keys() & head_entries.keys() if base_entries[name] != head_entries[name]},
+        version_bumped=base_version is not None and head_version is not None and head_version > base_version,
+    )
 
 
 def _bump_native_marketplace_version(
@@ -679,22 +694,26 @@ def _sync_native_marketplace(
         })
     for source, name in renamed.items():
         local_entries[source]["name"] = name
-    removed, introduced, edited = _membership_changes_between_refs(root, marketplace.path, base_ref, head_ref)
-    changed = bool(deleted or added or renamed or removed or introduced or edited) or any(
+    ref_changes = _catalog_changes_between_refs(root, marketplace, base_ref, head_ref)
+    changed = bool(
+        deleted or added or renamed or ref_changes.removed or ref_changes.added or ref_changes.edited
+    ) or any(
         _source_differs_between_refs(root, source, marketplace.path, base_ref, head_ref) for source in local_plugins
     )
     if not changed and (
         not bump or marketplace.version_key_path is None or not _marketplace_differs_from_head(marketplace.path)
     ):
         return False
-    if not bump or marketplace.version_key_path is None or manual_version:
+    if not bump or marketplace.version_key_path is None or manual_version or ref_changes.version_bumped:
         if changed and not dry_run:
             _write_json_lf(marketplace_path, _format_json(data))
         return changed
     if dry_run:
         return True
     _bump_native_marketplace_version(
-        data, marketplace, "major" if deleted or removed else "minor" if added or introduced else "patch"
+        data,
+        marketplace,
+        "major" if deleted or ref_changes.removed else "minor" if added or ref_changes.added else "patch",
     )
     _write_json_lf(marketplace_path, _format_json(data))
     return True

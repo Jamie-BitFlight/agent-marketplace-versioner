@@ -381,14 +381,14 @@ CATALOG = Path(".claude-plugin/marketplace.json")
 REMOTE = {"source": "github", "repo": "example/remote"}
 
 
-def commit_catalog(repo: Path, entries: dict[str, object]) -> str:
+def commit_catalog(repo: Path, entries: dict[str, object], version: str = "1.0.0") -> str:
     """Commit a catalog of name → source; each string source gets a plugin manifest."""
     shutil.rmtree(repo / "plugins", ignore_errors=True)
     for name, source in entries.items():
         if isinstance(source, str):
             write_json(repo / source / ".claude-plugin/plugin.json", {"name": name, "version": "1.0.0"})
     plugins = [{"name": name, "source": source} for name, source in entries.items()]
-    write_json(repo / CATALOG, {"metadata": {"version": "1.0.0"}, "plugins": plugins})
+    write_json(repo / CATALOG, {"metadata": {"version": version}, "plugins": plugins})
     git(repo, "add", "-A")
     git(repo, "commit", "--quiet", "-m", "+".join(entries))
     return git(repo, "rev-parse", "HEAD").strip()
@@ -451,6 +451,16 @@ def test_marketplace_membership_runs_git_inside_root(tmp_path: Path, monkeypatch
 
     assert sync_native_marketplaces(repo, base_ref=base, head_ref=head) == [CATALOG]
     assert catalog_version(repo) == "2.0.0"
+
+
+def test_marketplace_membership_keeps_a_bump_committed_at_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize(tmp_path)
+    base = commit_catalog(tmp_path, {"one": "./plugins/one"})
+    head = commit_catalog(tmp_path, {"one": "./plugins/one", "two": "./plugins/two"}, version="1.1.0")
+    monkeypatch.chdir(tmp_path)
+
+    sync_native_marketplaces(base_ref=base, head_ref=head)
+    assert catalog_version(tmp_path) == "1.1.0"
 
 
 def test_marketplace_membership_needs_a_base_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

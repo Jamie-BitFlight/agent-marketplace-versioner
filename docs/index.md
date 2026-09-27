@@ -93,7 +93,8 @@ versionless catalogs. With a base revision, catalog entries match by plugin `nam
 between the base and head revisions, whatever their source type. A name removed
 since the base bumps the major version, and a new name bumps the minor version.
 A plugin that moves but keeps its name, any other edit to a same-name entry, and
-any change to a local plugin's files bump the patch version. Add a commit-and-push step to publish the result.
+any change to a local plugin's files bump the patch version. A catalog version that
+the head revision already raises above the base stays as committed. Add a commit-and-push step to publish the result.
 
 The `v1` tag advances only through compatible v1 releases. Pin an immutable
 commit SHA instead when your supply-chain policy requires it. The action installs
