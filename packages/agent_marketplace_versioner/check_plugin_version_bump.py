@@ -61,6 +61,7 @@ from agent_marketplace_versioner.native_manifests import (
     manifest_kind,
     manifest_root,
     source_for_path,
+    without_nested_plugins,
 )
 
 _RENAME_STATUS_FIELDS = 3
@@ -110,7 +111,7 @@ def _native_manifests_at_ref(ref: str) -> list[NativeManifest]:
                 version_key_path=("metadata", "version") if kind == "marketplace" else ("version",),
             )
         )
-    return manifests
+    return without_nested_plugins(manifests)
 
 
 def _plugin_identity_at_ref(ref: str, manifest: NativeManifest) -> str | None:

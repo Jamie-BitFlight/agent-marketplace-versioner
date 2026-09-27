@@ -468,3 +468,70 @@ def test_staged_non_skill_file_does_not_register_a_skill_directory(
 
     assert sync_staged_manifests() == {Path("tool"): "1.0.1"}
     assert json.loads(manifest.read_text())["skills"] == []
+
+
+PLUGIN = Path("plugins/x/.claude-plugin/plugin.json")
+FIXTURE = Path("plugins/x/evals/files/hidden-styles/.claude-plugin/plugin.json")
+
+
+def commit_plugin_with_fixture(repo: Path, fixture_data: dict[str, object] | None = None) -> None:
+    initialize(repo)
+    write_json(repo / PLUGIN, {"name": "x", "version": "1.0.0"})
+    write_json(repo / FIXTURE, fixture_data or {"name": "fixture", "version": "0.1.0"})
+    (repo / FIXTURE.parent.parent / "README.md").write_text("before\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "--quiet", "-m", "base")
+
+
+def version(repo: Path, path: Path) -> str:
+    return json.loads((repo / path).read_text())["version"]
+
+
+def test_audit_and_repair_treat_a_nested_fixture_manifest_as_plugin_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commit_plugin_with_fixture(tmp_path)
+    (tmp_path / FIXTURE.parent.parent / "README.md").write_text("after\n")
+    git(tmp_path, "commit", "--quiet", "-am", "edit fixture")
+    monkeypatch.chdir(tmp_path)
+
+    audit = CliRunner().invoke(app, ["audit"])
+    assert json.loads(audit.stdout) == {"drifted_manifests": [PLUGIN.as_posix()]}
+    assert CliRunner().invoke(app, ["repair"]).exit_code == 0
+    assert (version(tmp_path, PLUGIN), version(tmp_path, FIXTURE)) == ("1.0.1", "0.1.0")
+
+
+def test_staged_sync_bumps_the_enclosing_plugin_for_a_fixture_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commit_plugin_with_fixture(tmp_path)
+    (tmp_path / FIXTURE.parent.parent / "README.md").write_text("after\n")
+    git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path("plugins/x"): "1.0.1"}
+    assert version(tmp_path, FIXTURE) == "0.1.0"
+
+
+def test_check_requires_the_enclosing_plugin_bump_for_a_fixture_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commit_plugin_with_fixture(tmp_path)
+    base = git(tmp_path, "rev-parse", "HEAD").strip()
+    (tmp_path / FIXTURE.parent.parent / "README.md").write_text("after\n")
+    git(tmp_path, "commit", "--quiet", "-am", "edit fixture")
+    monkeypatch.chdir(tmp_path)
+
+    assert check_native_version_bumps(base) == [PLUGIN]
+
+
+def test_reconcile_leaves_a_nested_fixture_manifest_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    commit_plugin_with_fixture(tmp_path, {"name": "fixture", "version": "0.1.0", "skills": []})
+    skill = tmp_path / FIXTURE.parent.parent / "skills/demo/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: demo\n---\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "fixture skill")
+    monkeypatch.chdir(tmp_path)
+
+    assert CliRunner().invoke(app, ["reconcile", "--dry-run"]).exit_code == 0

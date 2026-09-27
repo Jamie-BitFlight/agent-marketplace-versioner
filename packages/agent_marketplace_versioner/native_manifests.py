@@ -113,7 +113,25 @@ def discover_manifests(root: Path = Path()) -> list[NativeManifest]:
         if kind is None:
             continue
         manifests.append(NativeManifest(path=path, kind=kind, version_key_path=_version_key_path(root, path, kind)))
-    return sorted(manifests, key=lambda manifest: manifest.path.as_posix())
+    return sorted(without_nested_plugins(manifests), key=lambda manifest: manifest.path.as_posix())
+
+
+def without_nested_plugins(manifests: list[NativeManifest]) -> list[NativeManifest]:
+    """Drop plugin manifests whose source root lies inside another plugin's source root.
+
+    Such a manifest is content of the enclosing plugin, such as an eval fixture.
+
+    Returns:
+        The manifests that are not nested plugin manifests, in their input order.
+    """
+    # ponytail: a repository-root plugin never encloses others, so its own fixtures still count as
+    # plugins; add an explicit exclude option when a root-level plugin ships fixture manifests.
+    enclosing = {manifest_root(manifest) for manifest in manifests if manifest.kind == "plugin"} - {Path()}
+    return [
+        manifest
+        for manifest in manifests
+        if manifest.kind != "plugin" or enclosing.isdisjoint(manifest_root(manifest).parents)
+    ]
 
 
 def marketplace_sources(manifest: NativeManifest, root: Path = Path()) -> list[Path]:

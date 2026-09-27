@@ -60,6 +60,11 @@ All plugin manifests under one source root share one version. A repository root
 holding `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and
 `kimi.plugin.json` bumps all three together.
 
+A plugin manifest whose source root lies inside another plugin's source root,
+such as an eval fixture, is content of the enclosing plugin, not a plugin.
+Plugins at the repository root are the exception: they never enclose other
+plugins, so their own fixture manifests still version as plugins.
+
 A catalog is versioned only when it already carries `version` or
 `metadata.version`. A versionless catalog still has its entries reconciled and
 never gains a version field.
