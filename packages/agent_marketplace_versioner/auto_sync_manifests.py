@@ -2387,10 +2387,12 @@ def reconcile_native_manifests(*, dry_run: bool, staged: bool = False) -> int:
         if manifest.kind != "plugin":
             continue
         source = manifest_root(manifest)
+        # An unstaged deletion is reconciled in the index only, so the deletion stays.
+        index_only = staged and not dry_run and not manifest.path.exists()
         # A write keeps unstaged manifest edits; only the dry-run check judges the index manifest.
         data = json.loads(
             _run_git_bytes(["show", f":{manifest.path.as_posix()}"])
-            if staged and dry_run
+            if staged and (dry_run or index_only)
             else manifest.path.read_bytes()
         )
         changed = False
@@ -2408,7 +2410,10 @@ def reconcile_native_manifests(*, dry_run: bool, staged: bool = False) -> int:
                 changed |= _reconcile_mode_b(data, field, items, source.as_posix(), dry_run=dry_run)
         if changed and not dry_run:
             data["version"] = bump_version(data.get("version", "0.0.0"), "minor")
-            _write_json_lf(manifest.path, _format_json(data))
+            if index_only:
+                _stage_json(manifest.path, data)
+            else:
+                _write_json_lf(manifest.path, _format_json(data))
         drift |= changed
     drift |= bool(sync_native_marketplaces(bump=False, dry_run=dry_run, manifests=manifests, preserve_unstaged=staged))
     print("Drift detected." if drift else "No drift detected — all manifests match filesystem.")
