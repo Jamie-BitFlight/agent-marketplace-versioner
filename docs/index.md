@@ -44,6 +44,17 @@ using the highest sibling version as its staged-change baseline.
 Catalog entry additions and removals are also reconciled and staged, without
 changing the catalog version or introducing a version field.
 
+Use the hook id `agent-marketplace-versioner-check` instead when a post-merge
+workflow assigns versions. It runs `reconcile --dry-run`: it never bumps, never
+writes, and exits 1 when component arrays or catalog membership drift from the
+filesystem. See the Merge-time approach in
+[Choosing a versioning approach](setup.md#choosing-a-versioning-approach).
+
+```yaml
+    hooks:
+      - id: agent-marketplace-versioner-check
+```
+
 `rev: v1` is a moving compatibility tag, but each runner caches the revision first
 resolved for that literal value. After a new v1 release, refresh an existing local
 installation before expecting it to run the newer hook:

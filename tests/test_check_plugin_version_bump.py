@@ -1112,3 +1112,57 @@ class TestRepairPluginVersionIntegration:
         # Assert -- no further bump
         assert second_exit_code == 0
         assert json.loads(plugin_json_path.read_text(encoding="utf-8"))["version"] == "9.0.18"
+
+
+@pytest.mark.integration
+class TestRunRepairMergeShapesIntegration:
+    """Repair adds no patch bump when the merged change already changed the version."""
+
+    @staticmethod
+    def _repo_with_plugin(repo: Path) -> Path:
+        _git(repo, "init", "--initial-branch=main")
+        _git(repo, "config", "commit.gpgsign", "false")
+        manifest = _write_plugin_json(repo, "dh", "1.0.0")
+        (repo / "plugins" / "dh" / "README.md").write_text("before\n", encoding="utf-8")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "base")
+        return manifest
+
+    @staticmethod
+    def _repair(capsys: Any) -> dict[str, list[object]]:
+        assert gate._run_repair() == 0
+        return json.loads(capsys.readouterr().out)
+
+    def test_squash_commit_with_content_and_version(self, tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
+        monkeypatch.chdir(tmp_path)
+        manifest = self._repo_with_plugin(tmp_path)
+        (tmp_path / "plugins" / "dh" / "README.md").write_text("after\n", encoding="utf-8")
+        _write_plugin_json(tmp_path, "dh", "1.1.0")
+        _git(tmp_path, "add", ".")
+        _git(tmp_path, "commit", "-m", "feat: squash of content and minor bump")
+
+        assert self._repair(capsys) == {"repaired": [], "failed": []}
+        assert json.loads(manifest.read_text(encoding="utf-8"))["version"] == "1.1.0"
+
+    @pytest.mark.parametrize(("bump_on_branch", "expected_version"), [(True, "1.1.0"), (False, "1.0.1")])
+    def test_merge_commit_after_branch_bumps_last(
+        self, tmp_path: Path, monkeypatch: Any, capsys: Any, *, bump_on_branch: bool, expected_version: str
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        manifest = self._repo_with_plugin(tmp_path)
+        _git(tmp_path, "switch", "-c", "feature")
+        (tmp_path / "plugins" / "dh" / "README.md").write_text("after\n", encoding="utf-8")
+        _git(tmp_path, "commit", "-am", "content")
+        if bump_on_branch:
+            _write_plugin_json(tmp_path, "dh", "1.1.0")
+            _git(tmp_path, "commit", "-am", "minor bump")
+        _git(tmp_path, "switch", "main")
+        (tmp_path / "unrelated.txt").write_text("main moved\n", encoding="utf-8")
+        _git(tmp_path, "add", ".")
+        _git(tmp_path, "commit", "-m", "unrelated")
+        _git(tmp_path, "merge", "--no-ff", "-m", "merge feature", "feature")
+
+        result = self._repair(capsys)
+
+        assert bool(result["repaired"]) is not bump_on_branch
+        assert json.loads(manifest.read_text(encoding="utf-8"))["version"] == expected_version
