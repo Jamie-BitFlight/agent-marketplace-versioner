@@ -251,6 +251,82 @@ def test_reconcile_staged_ignores_untracked_skills(
     assert CliRunner().invoke(app, ["reconcile", "--dry-run", *args]).exit_code == exit_code
 
 
+def _committed_plugin_with_skill(repo: Path) -> Path:
+    initialize(repo)
+    manifest = repo / "tool/.claude-plugin/plugin.json"
+    write_json(manifest, {"name": "tool", "version": "1.0.0", "skills": ["./skills/foo"], "commands": ["./skills/foo"]})
+    skill = repo / "tool/skills/foo/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: foo\n---\n")
+    write_json(repo / ".claude-plugin/marketplace.json", {"plugins": [{"name": "tool", "source": "./tool"}]})
+    git(repo, "add", ".")
+    git(repo, "commit", "--quiet", "-m", "base")
+    return manifest
+
+
+def test_reconcile_staged_ignores_unstaged_component_deletion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _committed_plugin_with_skill(tmp_path)
+    (tmp_path / "tool/skills/foo/SKILL.md").unlink()
+    monkeypatch.chdir(tmp_path)
+
+    assert CliRunner().invoke(app, ["reconcile", "--dry-run", "--staged"]).exit_code == 0
+    assert CliRunner().invoke(app, ["reconcile", "--dry-run"]).exit_code == 1
+
+
+def test_reconcile_staged_ignores_unstaged_manifest_and_catalog_edits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = _committed_plugin_with_skill(tmp_path)
+    write_json(manifest, {"name": "tool", "version": "1.0.0", "skills": [], "commands": []})
+    write_json(tmp_path / ".claude-plugin/marketplace.json", {"plugins": []})
+    monkeypatch.chdir(tmp_path)
+
+    assert CliRunner().invoke(app, ["reconcile", "--dry-run", "--staged"]).exit_code == 0
+    assert json.loads((tmp_path / ".claude-plugin/marketplace.json").read_text()) == {"plugins": []}
+    assert CliRunner().invoke(app, ["reconcile", "--dry-run"]).exit_code == 1
+
+
+def test_reconcile_staged_keeps_unstaged_manifest_edits_when_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = _committed_plugin_with_skill(tmp_path)
+    bar = tmp_path / "tool/skills/bar/SKILL.md"
+    bar.parent.mkdir(parents=True)
+    bar.write_text("---\nname: bar\n---\n")
+    git(tmp_path, "add", ".")
+    data = json.loads(manifest.read_text())
+    write_json(manifest, {**data, "description": "unstaged"})
+    monkeypatch.chdir(tmp_path)
+
+    assert CliRunner().invoke(app, ["reconcile", "--staged"]).exit_code == 0
+    written = json.loads(manifest.read_text())
+    assert written["description"] == "unstaged"
+    assert "./skills/bar" in written["skills"]
+
+
+def test_reconcile_staged_ignores_unstaged_catalog_deletion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _committed_plugin_with_skill(tmp_path)
+    catalog = tmp_path / ".claude-plugin/marketplace.json"
+    catalog.unlink()
+    monkeypatch.chdir(tmp_path)
+
+    assert CliRunner().invoke(app, ["reconcile", "--dry-run", "--staged"]).exit_code == 0
+    assert not catalog.exists()
+
+
+def test_reconcile_staged_reports_staged_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _committed_plugin_with_skill(tmp_path)
+    bar = tmp_path / "tool/skills/bar/SKILL.md"
+    bar.parent.mkdir(parents=True)
+    bar.write_text("---\nname: bar\n---\n")
+    git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, ["reconcile", "--dry-run", "--staged"])
+    assert result.exit_code == 1
+    assert "Drift detected." in result.output
+
+
 def test_sync_updates_local_catalog_name_after_plugin_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     initialize(tmp_path)
     catalog = tmp_path / ".claude-plugin/marketplace.json"
