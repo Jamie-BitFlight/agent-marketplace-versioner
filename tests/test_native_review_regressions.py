@@ -451,11 +451,27 @@ def test_marketplace_membership_runs_git_inside_root(tmp_path: Path, monkeypatch
 
     assert sync_native_marketplaces(repo, base_ref=base, head_ref=head) == [CATALOG]
     assert catalog_version(repo) == "2.0.0"
+    assert git(repo, "diff", "--cached", "--name-only").split() == [CATALOG.as_posix()]
 
 
 def test_marketplace_membership_keeps_a_bump_committed_at_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     initialize(tmp_path)
     base = commit_catalog(tmp_path, {"one": "./plugins/one"})
+    head = commit_catalog(tmp_path, {"one": "./plugins/one", "two": "./plugins/two"}, version="1.1.0")
+    monkeypatch.chdir(tmp_path)
+
+    sync_native_marketplaces(base_ref=base, head_ref=head)
+    assert catalog_version(tmp_path) == "1.1.0"
+
+
+def test_marketplace_membership_reads_each_revisions_version_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize(tmp_path)
+    commit_catalog(tmp_path, {"one": "./plugins/one"})
+    write_json(tmp_path / CATALOG, {"version": "1.0.0", "plugins": [{"name": "one", "source": "./plugins/one"}]})
+    git(tmp_path, "commit", "--quiet", "-am", "top-level version")
+    base = git(tmp_path, "rev-parse", "HEAD").strip()
     head = commit_catalog(tmp_path, {"one": "./plugins/one", "two": "./plugins/two"}, version="1.1.0")
     monkeypatch.chdir(tmp_path)
 

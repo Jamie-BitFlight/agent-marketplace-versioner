@@ -1738,7 +1738,7 @@ class TestPrecommitSyncMarketplaceStructural:
         # Mock git status to report new plugin's plugin.json as added
         staged_status = {"added": ["plugins/new-plugin/.claude-plugin/plugin.json"], "deleted": [], "modified": []}
         monkeypatch.setattr(auto_sync, "get_git_status", lambda: staged_status)
-        monkeypatch.setattr(auto_sync, "_git_stage_file", lambda _fp: None)
+        monkeypatch.setattr(auto_sync, "_git_stage_file", lambda _fp, _root=None: None)
 
         # Act
         exit_code = auto_sync._precommit_sync()
@@ -1778,7 +1778,7 @@ class TestPrecommitSyncMarketplaceStructural:
         # Only a modified skill — no plugin add/delete
         staged_status = {"added": [], "deleted": [], "modified": ["plugins/alpha/skills/my-skill/SKILL.md"]}
         monkeypatch.setattr(auto_sync, "get_git_status", lambda: staged_status)
-        monkeypatch.setattr(auto_sync, "_git_stage_file", lambda _fp: None)
+        monkeypatch.setattr(auto_sync, "_git_stage_file", lambda _fp, _root=None: None)
         monkeypatch.setattr(auto_sync, "_read_head_json", lambda _fp: {"name": "alpha", "version": "0.9.9"})
 
         # Act
@@ -1829,7 +1829,7 @@ class TestSyncMarketplaceMode:
         )
 
         # Suppress git add calls
-        monkeypatch.setattr(auto_sync, "_git_stage_file", lambda _fp: None)
+        monkeypatch.setattr(auto_sync, "_git_stage_file", lambda _fp, _root=None: None)
 
         # Act
         exit_code = auto_sync._sync_marketplace_mode()
@@ -1861,7 +1861,7 @@ class TestSyncMarketplaceMode:
             tmp_path, {"metadata": {"version": "1.0.0"}, "plugins": [{"name": "alpha", "source": "./plugins/alpha"}]}
         )
 
-        monkeypatch.setattr(auto_sync, "_git_stage_file", lambda _fp: None)
+        monkeypatch.setattr(auto_sync, "_git_stage_file", lambda _fp, _root=None: None)
 
         # Act
         exit_code = auto_sync._sync_marketplace_mode()

@@ -581,9 +581,13 @@ def _catalog_changes_between_refs(
     if base is None or head is None:
         return unchanged
     base_entries, head_entries = _catalog_entries(base), _catalog_entries(head)
-    key_path = list(marketplace.version_key_path or ())
-    base_version = extract_version_from_json(base, key_path) if key_path else None
-    head_version = extract_version_from_json(head, key_path) if key_path else None
+    # Each revision declares its own version field: top-level first, as in discovery.
+    base_version = extract_version_from_json(base, ["version"]) or extract_version_from_json(
+        base, ["metadata", "version"]
+    )
+    head_version = extract_version_from_json(head, ["version"]) or extract_version_from_json(
+        head, ["metadata", "version"]
+    )
     return _CatalogRefChanges(
         removed=base_entries.keys() - head_entries.keys(),
         added=head_entries.keys() - base_entries.keys(),
@@ -766,7 +770,7 @@ def sync_native_marketplaces(
                     _stage_json(marketplace.path, json.loads(marketplace_path.read_text(encoding="utf-8")))
                 marketplace_path.write_bytes(original_content)
             elif updated and not dry_run and updated[-1] == marketplace.path:
-                _git_stage_file(marketplace.path.as_posix())
+                _git_stage_file(marketplace.path.as_posix(), root)
     return updated
 
 
@@ -1629,15 +1633,16 @@ def _process_file_changes(status: dict[str, list[str]]) -> tuple[dict[str, Compo
     return plugin_component_changes, marketplace_changes
 
 
-def _git_stage_file(filepath: str) -> None:
+def _git_stage_file(filepath: str, root: Path = Path()) -> None:
     """Stage a file with git add, logging warnings on failure.
 
     Args:
-        filepath: Relative path to stage.
+        filepath: Path to stage, relative to *root*.
+        root: Repository directory to run git in.
     """
     if not _GIT_PATH:
         return
-    result = subprocess.run([_GIT_PATH, "add", filepath], capture_output=True, text=True, check=False)
+    result = subprocess.run([_GIT_PATH, "-C", str(root), "add", filepath], capture_output=True, text=True, check=False)
     if result.returncode != 0:
         sys.stderr.write(f"Warning: git add {filepath} failed: {result.stderr.strip()}\n")
 
