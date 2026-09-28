@@ -61,6 +61,7 @@ from agent_marketplace_versioner.native_manifests import (
     manifest_kind,
     manifest_root,
     source_for_path,
+    with_pi_packages,
     without_nested_manifests,
 )
 
@@ -99,8 +100,9 @@ def _path_at_parent(commit: str, parent: str, path: str) -> str:
 
 
 def _native_manifests_at_ref(ref: str) -> list[NativeManifest]:
+    paths = _git_paths(["ls-tree", "-r", "--name-only", "-z", ref])
     manifests: list[NativeManifest] = []
-    for path in _git_paths(["ls-tree", "-r", "--name-only", "-z", ref]):
+    for path in paths:
         kind = manifest_kind(path)
         if kind is None:
             continue
@@ -111,7 +113,7 @@ def _native_manifests_at_ref(ref: str) -> list[NativeManifest]:
                 version_key_path=("metadata", "version") if kind == "marketplace" else ("version",),
             )
         )
-    return manifests
+    return with_pi_packages(manifests, paths, lambda path: read_ref_json(ref, path))
 
 
 def _plugin_identity_at_ref(ref: str, manifest: NativeManifest) -> str | None:

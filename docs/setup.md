@@ -56,9 +56,14 @@ other path, including gitignored files:
 - **Marketplace catalogs** — `.<host>-plugin/marketplace.json` and
   `.agents/plugins/marketplace.json`.
 
+- **Pi packages** — `package.json` in a plugin manifest's source root, when
+  it declares a `pi` key or the `pi-package` keyword. It shares that root's
+  version but never enters a catalog. Any other `package.json`, and a Pi package
+  with no plugin manifest in its directory, is ignored.
+
 All plugin manifests under one source root share one version. A repository root
-holding `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and
-`kimi.plugin.json` bumps all three together.
+holding `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`,
+`kimi.plugin.json`, and a Pi `package.json` bumps all four together.
 
 A manifest inside another plugin's source root, such as an eval fixture's
 `plugin.json` or `marketplace.json`, is content of the enclosing plugin, not a
