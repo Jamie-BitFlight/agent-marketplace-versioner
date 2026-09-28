@@ -69,6 +69,21 @@ def test_staged_sync_bumps_the_pi_package_with_the_native_manifests(
     assert (tmp_path / CATALOG).read_text(encoding="utf-8") == catalog
 
 
+def test_staged_sync_bumps_a_plugin_that_gains_a_pi_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    git(tmp_path, "init", "--quiet", "--initial-branch=fixture")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.invalid")
+    write_json(tmp_path / NATIVE[0], {"name": "skill-lapidary", "version": "0.6.29"})
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "--quiet", "-m", "base")
+    write_json(tmp_path / PACKAGE, {**PI_PACKAGE, "version": "0.0.1"})
+    git(tmp_path, "add", ".")
+    monkeypatch.chdir(tmp_path)
+
+    assert sync_staged_manifests(tmp_path) == {Path(): "0.6.30"}
+    assert (version(tmp_path, NATIVE[0]), version(tmp_path, PACKAGE)) == ("0.6.30", "0.6.30")
+
+
 def test_repair_bumps_the_pi_package_with_the_native_manifests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     commit_layout(tmp_path)
     edit_skill(tmp_path)

@@ -375,7 +375,7 @@ def _native_file_changes(
     manifest_paths = {manifest.path for manifest in manifests if manifest.kind == "plugin"}
     manifests_per_root: dict[Path, int] = defaultdict(int)
     for manifest in manifests:
-        if manifest.kind == "plugin" and not is_pi_package(manifest.path):
+        if manifest.kind == "plugin":
             manifests_per_root[manifest_root(manifest)] += 1
     deleted_names = {
         data.get("name")
