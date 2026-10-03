@@ -103,18 +103,57 @@ def _version_key_path(root: Path, path: Path, kind: Literal["plugin", "marketpla
     return None
 
 
-def discover_all_manifests(root: Path = Path()) -> list[NativeManifest]:
+def discover_all_manifests(
+    root: Path = Path(), read_json: Callable[[Path], object] | None = None
+) -> list[NativeManifest]:
     """Find every Git-visible conventional manifest below *root*, nested ones included.
+
+    *read_json* reads the tree that decides which ``package.json`` files are Pi packages;
+    it defaults to the working tree.
 
     Returns:
         Native manifests sorted by repository-relative path.
     """
+    paths = _git_visible_paths(root)
     manifests: list[NativeManifest] = []
-    for path in _git_visible_paths(root):
+    for path in paths:
         kind = manifest_kind(path)
         if kind is None:
             continue
         manifests.append(NativeManifest(path=path, kind=kind, version_key_path=_version_key_path(root, path, kind)))
+    return with_pi_packages(manifests, paths, read_json or (lambda path: _read_json(root / path)))
+
+
+def is_pi_package(path: Path) -> bool:
+    """Return whether a manifest path is a Pi package ``package.json``."""
+    return path.name == "package.json"
+
+
+def with_pi_packages(
+    manifests: list[NativeManifest], paths: list[Path], read_json: Callable[[Path], object]
+) -> list[NativeManifest]:
+    """Add each Pi package ``package.json`` that shares a source root with a plugin manifest.
+
+    A ``package.json`` is a Pi package when it declares a ``pi`` key or the ``pi-package``
+    keyword. It then versions with the plugin manifests of its directory. Any other
+    ``package.json``, and a Pi package with no plugin manifest beside it, stays unmanaged.
+
+    Args:
+        manifests: Native manifests from one tree: worktree, index, or Git ref.
+        paths: Every candidate path in that same tree.
+        read_json: Reads a file's parsed JSON from that same tree.
+
+    Returns:
+        The manifests plus the managed Pi packages, sorted by repository-relative path.
+    """
+    roots = {manifest_root(manifest) for manifest in manifests if manifest.kind == "plugin"}
+    for path in paths:
+        if not is_pi_package(path) or path.parent not in roots:
+            continue
+        data = read_json(path)
+        keywords = data.get("keywords") if isinstance(data, dict) else None
+        if isinstance(data, dict) and ("pi" in data or (isinstance(keywords, list) and "pi-package" in keywords)):
+            manifests = [*manifests, NativeManifest(path=path, kind="plugin", version_key_path=("version",))]
     return sorted(manifests, key=lambda manifest: manifest.path.as_posix())
 
 
@@ -233,7 +272,7 @@ def manifest_root(manifest: NativeManifest) -> Path:
     """
     if manifest.kind != "plugin":
         raise NativeManifestError(f"not a plugin manifest: {manifest.path}")
-    loose = manifest.path.name.endswith((".plugin.json", "-plugin.json"))
+    loose = manifest.path.name.endswith((".plugin.json", "-plugin.json")) or is_pi_package(manifest.path)
     return manifest.path.parent if loose else manifest.path.parent.parent
 
 

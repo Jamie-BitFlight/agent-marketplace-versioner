@@ -54,6 +54,7 @@ from agent_marketplace_versioner.native_manifests import (
     discover_all_manifests,
     discover_manifests,
     is_git_visible,
+    is_pi_package,
     manifest_kind,
     manifest_root,
     manifests_for_source,
@@ -468,7 +469,8 @@ def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
     """
     staged_paths = _staged_paths()
     manifests = without_nested_manifests(
-        [manifest for manifest in discover_all_manifests(root) if manifest.path in staged_paths], _read_staged_json
+        [manifest for manifest in discover_all_manifests(root, _read_staged_json) if manifest.path in staged_paths],
+        _read_staged_json,
     )
     updated: dict[Path, str] = {}
     status = get_git_status()
@@ -488,9 +490,8 @@ def sync_staged_manifests(root: Path = Path()) -> dict[Path, str]:
             if staged_data is None:
                 continue
             _write_json_lf(manifest.path, _format_json(staged_data))
-            manifest_updated, _ = _update_plugin_manifest(
-                manifest.path, changes, sync_components=True, compare_to_head=True
-            )
+            if not is_pi_package(manifest.path):  # a package.json only follows the shared version
+                _update_plugin_manifest(manifest.path, changes, sync_components=True, compare_to_head=True)
             generated_data = json.loads(manifest.path.read_text(encoding="utf-8"))
             if generated_data.get("version") != target_version:
                 generated_data["version"] = target_version
@@ -683,7 +684,7 @@ def _sync_native_marketplace(
     local_plugins = {
         manifest_root(manifest): manifest
         for manifest in manifests
-        if manifest.kind == "plugin"
+        if manifest.kind == "plugin" and not is_pi_package(manifest.path)
         if manifest_root(manifest).parent in source_parents
         or (not local_entries and manifest_root(manifest).is_relative_to(marketplace_root(marketplace)))
     }
@@ -2380,14 +2381,16 @@ def reconcile_native_manifests(*, dry_run: bool, staged: bool = False) -> int:
     index = _staged_paths() if staged else None
     manifests = (
         without_nested_manifests(
-            [manifest for manifest in discover_all_manifests() if manifest.path in index], _read_staged_json
+            [manifest for manifest in discover_all_manifests(read_json=_read_staged_json) if manifest.path in index],
+            _read_staged_json,
         )
         if index is not None
         else discover_manifests()
     )
     drift = False
     for manifest in manifests:
-        if manifest.kind != "plugin":
+        # A Pi package.json has no component arrays to reconcile.
+        if manifest.kind != "plugin" or is_pi_package(manifest.path):
             continue
         source = manifest_root(manifest)
         # An unstaged deletion is reconciled in the index only, so the deletion stays.
